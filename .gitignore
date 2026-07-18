@@ -1,0 +1,10 @@
+justfile
+AGENTS.md
+CLAUDE.md
+/gokart
+.claude/
+.codex/
+
+.work/
+go.work
+go.work.sum
