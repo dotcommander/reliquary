@@ -96,3 +96,35 @@ func TestSimulatedFTSAndLocalBM25Fixture(t *testing.T) {
 		t.Fatalf("postgres top = %#v, want provider score preserved", postgres[0])
 	}
 }
+
+func TestRankedIndicesAndReport(t *testing.T) {
+	t.Parallel()
+
+	list := RankedList{
+		{ID: ""},
+		{ID: "doc-a"},
+		{ID: "doc-unknown"},
+	}
+	indexByID := map[string]int{"doc-a": 42}
+
+	indices := RankedIndices(list, indexByID)
+	if !reflect.DeepEqual(indices, []int{42}) {
+		t.Fatalf("RankedIndices = %v, want [42]", indices)
+	}
+
+	_, report := RankedIndicesWithReport(list, indexByID)
+	if report.SkippedEmpty != 1 || report.SkippedUnknown != 1 || report.OutputCount != 1 {
+		t.Fatalf("report = %#v", report)
+	}
+}
+
+func TestSearcherFuncNil(t *testing.T) {
+	t.Parallel()
+
+	var fn SearcherFunc
+	got, err := fn.SearchLexical(context.Background(), SearchRequest{})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("nil SearcherFunc returned %v, %v", got, err)
+	}
+}
+

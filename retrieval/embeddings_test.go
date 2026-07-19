@@ -79,3 +79,18 @@ func TestRerankEmbedding(t *testing.T) {
 		t.Fatalf("RerankEmbedding() top result = %q, want a", ranked[0].ID)
 	}
 }
+
+func TestEmbeddingVectors(t *testing.T) {
+	t.Parallel()
+
+	vecs := []embeddings.Vector{{1.0, 2.0}, {3.0, 4.0}}
+	got := EmbeddingVectors(vecs)
+	if len(got) != 2 || got[0][0] != 1.0 || got[1][1] != 4.0 {
+		t.Fatalf("EmbeddingVectors = %v", got)
+	}
+
+	results := []*Result{nil, {ID: "b"}}
+	if err := AttachEmbeddings(results, vecs); err != nil {
+		t.Fatalf("AttachEmbeddings with nil item failed: %v", err)
+	}
+}

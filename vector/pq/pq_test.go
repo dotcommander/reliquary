@@ -509,3 +509,35 @@ func meanSquaredError(a, b []float32) float32 {
 	}
 	return sum / float32(len(a))
 }
+
+func TestConfigEstimatedAccuracyAndFarthestPoint(t *testing.T) {
+	t.Parallel()
+
+	cfg := DefaultConfig()
+	q, err := NewQuantizer(cfg)
+	if err != nil {
+		t.Fatalf("NewQuantizer failed: %v", err)
+	}
+
+	if q.Config() != cfg {
+		t.Fatalf("q.Config() = %+v, want %+v", q.Config(), cfg)
+	}
+
+	acc := cfg.EstimatedAccuracy()
+	if acc <= 0 || acc > 1 {
+		t.Fatalf("EstimatedAccuracy = %v, want (0, 1]", acc)
+	}
+
+	zeroCfg := Config{NumSubspaces: 0}
+	if zeroCfg.CompressionRatio() != 0 {
+		t.Fatalf("zeroCfg CompressionRatio = %v, want 0", zeroCfg.CompressionRatio())
+	}
+
+	// Test findFarthestPoint
+	vectors := [][]float32{{0, 0}, {1, 0}, {10, 10}}
+	centroids := [][]float32{{0, 0}}
+	farthest := findFarthestPoint(vectors, centroids)
+	if len(farthest) != 2 || farthest[0] != 10 || farthest[1] != 10 {
+		t.Fatalf("findFarthestPoint = %v, want [10, 10]", farthest)
+	}
+}

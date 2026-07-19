@@ -108,3 +108,46 @@ func TestIndexContract(t *testing.T) {
 		return idx
 	})
 }
+
+func TestBoundedIndexNameAndValidateIdentifier(t *testing.T) {
+	t.Parallel()
+
+	// Short name
+	name := boundedIndexName("my_table", "doc")
+	if name != "idx_my_table_doc" {
+		t.Fatalf("boundedIndexName = %q, want idx_my_table_doc", name)
+	}
+
+	// Long table name that causes >63 char name
+	longTable := strings.Repeat("a", 60)
+	longName := boundedIndexName(longTable, "suffix_very_long")
+	if len(longName) != 63 {
+		t.Fatalf("len(boundedIndexName) = %d, want 63", len(longName))
+	}
+
+	// validateIdentifier edge cases
+	invalidIdentifiers := []string{
+		"",
+		strings.Repeat("a", 64),
+		"  trimmed  ",
+		"1leading_digit",
+		"invalid-char!",
+		"non_ascii_\u00e9",
+	}
+	for _, id := range invalidIdentifiers {
+		if err := validateIdentifier(id); err == nil {
+			t.Fatalf("validateIdentifier(%q) expected error, got nil", id)
+		}
+	}
+
+	validIdentifiers := []string{
+		"valid_name",
+		"Table123",
+		"a",
+	}
+	for _, id := range validIdentifiers {
+		if err := validateIdentifier(id); err != nil {
+			t.Fatalf("validateIdentifier(%q) unexpected error: %v", id, err)
+		}
+	}
+}

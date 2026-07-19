@@ -120,3 +120,38 @@ func sortedCentroidsByFirstCoord(centroids [][]float64) [][]float64 {
 	})
 	return sorted
 }
+
+func TestSilhouetteScoresAndOptimalK64(t *testing.T) {
+	t.Parallel()
+
+	// Empty / single point edge cases
+	if score := AverageSilhouetteScore64(nil, nil); score != 0 {
+		t.Fatalf("AverageSilhouetteScore64(nil) = %v, want 0", score)
+	}
+
+	bestK, bestScore, assignments, centroids, scores, kValues := FindOptimalK64([][]float64{{1, 0}}, 2, 5)
+	if bestK != 1 || bestScore != 0 || len(assignments) != 1 || centroids != nil || len(scores) != 1 || len(kValues) != 1 {
+		t.Fatalf("FindOptimalK64 small input = %d, %v, %v, %v, %v, %v", bestK, bestScore, assignments, centroids, scores, kValues)
+	}
+
+	// Two distinct clusters
+	points := [][]float64{
+		{1, 0}, {0.9, 0.1}, {0.95, 0.05},
+		{0, 1}, {0.1, 0.9}, {0.05, 0.95},
+	}
+	res := KMeans64(points, KMeans64Config{K: 2, Seed: 42})
+	avgScore := AverageSilhouetteScore64(points, res.Assignments)
+	if avgScore <= 0 {
+		t.Fatalf("AverageSilhouetteScore64 = %v, want > 0", avgScore)
+	}
+
+	clusterScores := ClusterSilhouetteScores64(points, res.Assignments)
+	if len(clusterScores) != 2 {
+		t.Fatalf("ClusterSilhouetteScores64 count = %d, want 2", len(clusterScores))
+	}
+
+	bestK, bestScore, assignments, centroids, scores, kValues = FindOptimalK64(points, 2, 3)
+	if bestK < 2 || bestScore <= 0 || len(assignments) != len(points) || len(centroids) == 0 || len(scores) == 0 || len(kValues) == 0 {
+		t.Fatalf("FindOptimalK64 multi-point = bestK=%d score=%v assignments=%d centroids=%d", bestK, bestScore, len(assignments), len(centroids))
+	}
+}

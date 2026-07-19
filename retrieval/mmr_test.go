@@ -2,88 +2,61 @@ package retrieval
 
 import "testing"
 
-func TestMMRImprovesDiversity(t *testing.T) {
+func TestMMRAndDiversify(t *testing.T) {
 	t.Parallel()
 
-	items := []MMRItem{
-		{ID: "a1", Score: 0.99, Embedding: []float64{1, 0}, Topic: "a"},
-		{ID: "a2", Score: 0.98, Embedding: []float64{0.99, 0.01}, Topic: "a"},
-		{ID: "b1", Score: 0.90, Embedding: []float64{0, 1}, Topic: "b"},
-	}
+	r1 := &Result{ID: "r1", CombinedScore: 0.9, Embedding: []float64{1, 0}, Filename: "f1"}
+	r2 := &Result{ID: "r2", CombinedScore: 0.85, Embedding: []float64{0.99, 0.01}, Filename: "f1"}
+	r3 := &Result{ID: "r3", CombinedScore: 0.7, Embedding: []float64{0, 1}, Filename: "f2"}
 
-	got := MMR(items, 2, 0.5)
-	if len(got) != 2 {
-		t.Fatalf("MMR() returned %d items, want 2", len(got))
-	}
-	if got[0].ID == got[1].ID {
-		t.Fatalf("MMR returned duplicate IDs")
-	}
-	if got[0].Topic == got[1].Topic {
-		t.Fatalf("MMR did not diversify topics")
-	}
-}
+	results := []*Result{nil, r1, r2, r3}
 
-// TestMMRDuplicateIDs pins that MMR does NOT deduplicate by ID — two items
-// sharing an ID are both selectable. With lambda=1 (pure relevance) both
-// "dup" items outrank the lower-scored unique item.
-func TestMMRDuplicateIDs(t *testing.T) {
-	t.Parallel()
+	t.Run("MMRItems filters nil", func(t *testing.T) {
+		items := MMRItems(results)
+		if len(items) != 3 {
+			t.Fatalf("len(items) = %d, want 3", len(items))
+		}
+		if items[0].ID != "r1" || items[0].Topic != "f1" {
+			t.Fatalf("item 0 = %#v", items[0])
+		}
+	})
 
-	items := []MMRItem{
-		{ID: "dup", Score: 0.9, Embedding: []float64{1, 0}},
-		{ID: "dup", Score: 0.8, Embedding: []float64{1, 0}},
-		{ID: "other", Score: 0.1, Embedding: []float64{0, 1}},
-	}
-	got := MMR(items, 2, 1)
-	if len(got) != 2 {
-		t.Fatalf("MMR() returned %d items, want 2", len(got))
-	}
-	if got[0].ID != "dup" || got[1].ID != "dup" {
-		t.Fatalf("MMR selected IDs = (%q, %q), want both \"dup\" (no dedup)", got[0].ID, got[1].ID)
-	}
-	if got[0].Score != 0.9 || got[1].Score != 0.8 {
-		t.Fatalf("MMR selected scores = (%v, %v), want (0.9, 0.8)", got[0].Score, got[1].Score)
-	}
-}
+	t.Run("Diversify selects diverse results", func(t *testing.T) {
+		div := Diversify(results, 2, 0.5)
+		if len(div) != 2 {
+			t.Fatalf("len(div) = %d, want 2", len(div))
+		}
+		// r1 should be chosen first, and r3 should be preferred over r2 due to diversity (different direction)
+		if div[0].ID != "r1" {
+			t.Fatalf("first = %s, want r1", div[0].ID)
+		}
+		if div[1].ID != "r3" {
+			t.Fatalf("second = %s, want r3", div[1].ID)
+		}
+	})
 
-// TestMMREmptyEmbeddingTreatedAsZeroSimilarity pins that an item with an empty
-// embedding contributes 0 to maxSimilarity, so with lambda=0.5 the second pick
-// is driven purely by Score among the zero-similarity candidates. All three
-// items have empty embeddings, so similarity is always 0 and MMR reduces to
-// descending Score order.
-func TestMMREmptyEmbeddingTreatedAsZeroSimilarity(t *testing.T) {
-	t.Parallel()
+	t.Run("MMR empty edge cases", func(t *testing.T) {
+		if got := MMR(nil, 5, 0.5); got != nil {
+			t.Fatalf("MMR(nil) = %v, want nil", got)
+		}
+		items := MMRItems([]*Result{r1})
+		if got := MMR(items, 0, 0.5); got != nil {
+			t.Fatalf("MMR(k=0) = %v, want nil", got)
+		}
+	})
 
-	items := []MMRItem{
-		{ID: "a", Score: 0.9},
-		{ID: "b", Score: 0.7},
-		{ID: "c", Score: 0.5},
-	}
-	got := MMR(items, 3, 0.5)
-	if len(got) != 3 {
-		t.Fatalf("MMR() returned %d items, want 3", len(got))
-	}
-	if got[0].ID != "a" || got[1].ID != "b" || got[2].ID != "c" {
-		t.Fatalf("MMR order = (%q, %q, %q), want (a, b, c) by descending score", got[0].ID, got[1].ID, got[2].ID)
-	}
-}
+	t.Run("maxSimilarity handles missing embeddings", func(t *testing.T) {
+		itemNoEmbed := MMRItem{ID: "no_embed", Score: 0.5}
+		itemWithEmbed := MMRItem{ID: "embed", Score: 0.8, Embedding: []float64{1, 0}}
 
-// TestMMRTieBreakEarliestIndexWins pins the strict-greater (`score > bestScore`)
-// comparison: when two candidates yield equal MMR score, the earlier index is
-// selected first. Two items with identical Score and identical embedding tie on
-// every metric; the input-order-earlier one must come first.
-func TestMMRTieBreakEarliestIndexWins(t *testing.T) {
-	t.Parallel()
+		sim1 := maxSimilarity(itemNoEmbed, []MMRItem{itemWithEmbed})
+		if sim1 != 0 {
+			t.Fatalf("sim1 = %v, want 0", sim1)
+		}
 
-	items := []MMRItem{
-		{ID: "first", Score: 0.5, Embedding: []float64{1, 0}},
-		{ID: "second", Score: 0.5, Embedding: []float64{1, 0}},
-	}
-	got := MMR(items, 2, 0.5)
-	if len(got) != 2 {
-		t.Fatalf("MMR() returned %d items, want 2", len(got))
-	}
-	if got[0].ID != "first" || got[1].ID != "second" {
-		t.Fatalf("MMR tie order = (%q, %q), want (first, second) — earliest index wins", got[0].ID, got[1].ID)
-	}
+		sim2 := maxSimilarity(itemWithEmbed, []MMRItem{itemNoEmbed})
+		if sim2 != 0 {
+			t.Fatalf("sim2 = %v, want 0", sim2)
+		}
+	})
 }

@@ -130,3 +130,22 @@ func TestResultsFromDocuments(t *testing.T) {
 		t.Fatalf("unexpected result: %+v", results[0])
 	}
 }
+
+func TestFallbackChunker(t *testing.T) {
+	t.Parallel()
+
+	fb := fallbackChunker{}
+	if fb.Strategy() != chunking.SmartBoundary {
+		t.Fatalf("Strategy() = %v, want SmartBoundary", fb.Strategy())
+	}
+
+	chunks := fb.Chunk("hello world", 0, -1) // defaults size=2000, overlap=0
+	if len(chunks) != 1 || chunks[0].Text != "hello world" {
+		t.Fatalf("fb.Chunk default size/overlap = %v", chunks)
+	}
+
+	chunks = fb.Chunk("abcdefghij", 4, 2)
+	if len(chunks) == 0 {
+		t.Fatal("expected chunks")
+	}
+}

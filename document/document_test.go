@@ -32,6 +32,89 @@ func TestOffsetsAndSpan(t *testing.T) {
 	}
 }
 
+func TestByteOffsetForRuneEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	text := "aéz" // len 4 bytes, 3 runes: 'a' (1 byte), 'é' (2 bytes: 0xc3 0xa9), 'z' (1 byte)
+
+	// Negative rune index
+	if _, ok := ByteOffsetForRune(text, -1); ok {
+		t.Fatal("expected false for negative rune index")
+	}
+
+	// Zero index
+	if off, ok := ByteOffsetForRune(text, 0); !ok || off != 0 {
+		t.Fatalf("index 0: off=%d ok=%v, want 0 true", off, ok)
+	}
+
+	// Index equal to rune count
+	if off, ok := ByteOffsetForRune(text, 3); !ok || off != len(text) {
+		t.Fatalf("index 3: off=%d ok=%v, want %d true", off, ok, len(text))
+	}
+
+	// Out of bounds rune index
+	if _, ok := ByteOffsetForRune(text, 4); ok {
+		t.Fatal("expected false for out of bounds rune index")
+	}
+}
+
+func TestRuneOffsetForByteEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	text := "aéz" // byte 0:'a', byte 1:0xc3, byte 2:0xa9, byte 3:'z', byte 4:EOF
+
+	// Negative byte offset
+	if _, ok := RuneOffsetForByte(text, -1); ok {
+		t.Fatal("expected false for negative byte offset")
+	}
+
+	// Out of bounds byte offset
+	if _, ok := RuneOffsetForByte(text, 10); ok {
+		t.Fatal("expected false for out of bounds byte offset")
+	}
+
+	// Byte offset equal to len(text)
+	if r, ok := RuneOffsetForByte(text, len(text)); !ok || r != 3 {
+		t.Fatalf("offset len: r=%d ok=%v, want 3 true", r, ok)
+	}
+
+	// Byte offset pointing inside a multi-byte rune (continuation byte)
+	if _, ok := RuneOffsetForByte(text, 2); ok {
+		t.Fatal("expected false for non-rune start byte offset")
+	}
+}
+
+func TestSpanValidEdgeCases(t *testing.T) {
+	t.Parallel()
+
+	text := "aéz"
+
+	// Start < 0
+	if (Span{StartByte: -1, EndByte: 2}).Valid(text) {
+		t.Fatal("expected invalid for negative StartByte")
+	}
+
+	// End < Start
+	if (Span{StartByte: 2, EndByte: 1}).Valid(text) {
+		t.Fatal("expected invalid for EndByte < StartByte")
+	}
+
+	// End > len
+	if (Span{StartByte: 0, EndByte: 10}).Valid(text) {
+		t.Fatal("expected invalid for EndByte > len")
+	}
+
+	// Unaligned start/end
+	if (Span{StartByte: 2, EndByte: 3}).Valid(text) {
+		t.Fatal("expected invalid for unaligned start byte")
+	}
+
+	// Invalid span text call returns ("", false)
+	if _, ok := (Span{StartByte: 2, EndByte: 3}).Text(text); ok {
+		t.Fatal("Text() on invalid span returned ok=true")
+	}
+}
+
 func TestElementTextPrefersValidSpan(t *testing.T) {
 	t.Parallel()
 
