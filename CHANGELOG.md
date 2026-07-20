@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add the `indexsink` package, an `ingest.Sink` backed by `index.Index` that lets
+  a `pipeline/ingest` run persist into reliquary's own storage.
+
 ## v0.8.0 (2026-07-18)
 
 ### Added
