@@ -10,7 +10,7 @@ import (
 
 func ExampleHashing_Embed() {
 	embedder := embed.NewHashing(8)
-	result, err := embedder.Embed(context.Background(), embeddings.Request{Inputs: []string{"hello world"}})
+	result, err := embedder.Embed(context.Background(), embedding.Request{Inputs: []string{"hello world"}})
 	fmt.Println(len(result.Vectors), len(result.Vectors[0]), err == nil)
 	// Output: 1 8 true
 }

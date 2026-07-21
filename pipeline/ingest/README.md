@@ -14,5 +14,5 @@ source. Apps compose readers, decoders, mappers, and sinks around their own
 source semantics.
 
 For persisting pipeline output into reliquary's own storage, the
-[`indexsink`](../../indexsink) package provides an `ingest.Sink` backed by
-`index.Index`.
+[`pipeline/indexsink`](../indexsink) package provides an `ingest.Sink` backed
+by `index.Index`.

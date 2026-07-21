@@ -1,4 +1,4 @@
-package embeddings_test
+package embedding_test
 
 import (
 	"fmt"
@@ -7,8 +7,8 @@ import (
 )
 
 func ExampleValidateDimensions() {
-	model := embeddings.ModelRef{Provider: "local", Name: "demo", Dim: 3}
-	err := embeddings.ValidateDimensions([]embeddings.Vector{{1, 2, 3}}, model.Dim)
+	model := embedding.ModelRef{Provider: "local", Name: "demo", Dim: 3}
+	err := embedding.ValidateDimensions([]embedding.Vector{{1, 2, 3}}, model.Dim)
 	fmt.Println(err == nil)
 	// Output: true
 }

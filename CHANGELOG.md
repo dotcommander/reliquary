@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.10.0 (2026-07-21)
+
+### Breaking changes
+
+- Rename the package identifier at import path `embedding` from `embeddings` to
+  `embedding`. The import path and exported API remain unchanged.
+- Move `indexsink` to `pipeline/indexsink` without a compatibility shim. Its
+  exported API and behavior remain unchanged.
+
 ## v0.9.0 (2026-07-21)
 
 ### Breaking changes

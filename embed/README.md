@@ -2,7 +2,7 @@
 
 ```go
 embedder := embed.NewHashing(64)
-result, err := embedder.Embed(ctx, embeddings.Request{Inputs: []string{"hello"}})
+result, err := embedder.Embed(ctx, embedding.Request{Inputs: []string{"hello"}})
 ```
 
 `embed` provides a deterministic hashing embedder for examples, tests, and

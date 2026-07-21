@@ -1,5 +1,5 @@
-// Package embeddings defines provider-neutral embedding contracts.
-package embeddings
+// Package embedding defines provider-neutral embedding contracts.
+package embedding
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 // ErrInvalidResult indicates that an embedder returned a malformed result.
-var ErrInvalidResult = errors.New("embeddings: invalid result")
+var ErrInvalidResult = errors.New("embedding: invalid result")
 
 // Vector is a dense embedding vector.
 type Vector []float32
@@ -106,11 +106,11 @@ func ValidateResult(request Request, result Result) error {
 // ValidateDimensions checks that every vector has dims values.
 func ValidateDimensions(vectors []Vector, dims int) error {
 	if dims <= 0 {
-		return fmt.Errorf("embeddings: invalid dims %d", dims)
+		return fmt.Errorf("embedding: invalid dims %d", dims)
 	}
 	for i, vector := range vectors {
 		if len(vector) != dims {
-			return fmt.Errorf("embeddings: vector %d has dims %d, expected %d", i, len(vector), dims)
+			return fmt.Errorf("embedding: vector %d has dims %d, expected %d", i, len(vector), dims)
 		}
 	}
 	return nil

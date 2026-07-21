@@ -10,9 +10,9 @@ import (
 	"github.com/dotcommander/reliquary/embedding"
 )
 
-type embedFunc func(context.Context, embeddings.Request) (embeddings.Result, error)
+type embedFunc func(context.Context, embedding.Request) (embedding.Result, error)
 
-func (f embedFunc) Embed(ctx context.Context, request embeddings.Request) (embeddings.Result, error) {
+func (f embedFunc) Embed(ctx context.Context, request embedding.Request) (embedding.Result, error) {
 	return f(ctx, request)
 }
 
@@ -20,7 +20,7 @@ func TestAttachEmbeddings(t *testing.T) {
 	t.Parallel()
 
 	results := []*Result{{ID: "a"}, {ID: "b"}}
-	err := AttachEmbeddings(results, []embeddings.Vector{{1, 2}, {3, 4}})
+	err := AttachEmbeddings(results, []embedding.Vector{{1, 2}, {3, 4}})
 	if err != nil {
 		t.Fatalf("AttachEmbeddings() error = %v", err)
 	}
@@ -32,7 +32,7 @@ func TestAttachEmbeddings(t *testing.T) {
 func TestAttachEmbeddingsCountMismatch(t *testing.T) {
 	t.Parallel()
 
-	err := AttachEmbeddings([]*Result{{ID: "a"}}, []embeddings.Vector{{1}, {2}})
+	err := AttachEmbeddings([]*Result{{ID: "a"}}, []embedding.Vector{{1}, {2}})
 	if err == nil {
 		t.Fatal("AttachEmbeddings() error = nil, want mismatch error")
 	}
@@ -48,12 +48,12 @@ func TestEmbedResults(t *testing.T) {
 		{ID: "a", Content: "alpha"},
 		{ID: "b", Content: "beta"},
 	}
-	stub := embedFunc(func(_ context.Context, request embeddings.Request) (embeddings.Result, error) {
-		vectors := make([]embeddings.Vector, len(request.Inputs))
+	stub := embedFunc(func(_ context.Context, request embedding.Request) (embedding.Result, error) {
+		vectors := make([]embedding.Vector, len(request.Inputs))
 		for i := range request.Inputs {
-			vectors[i] = embeddings.Vector{float32(i + 1), 42}
+			vectors[i] = embedding.Vector{float32(i + 1), 42}
 		}
-		return embeddings.Result{Vectors: vectors}, nil
+		return embedding.Result{Vectors: vectors}, nil
 	})
 
 	if err := EmbedResults(context.Background(), stub, results); err != nil {
@@ -71,9 +71,9 @@ func TestEmbedResultsRejectsNilBeforeEmbedding(t *testing.T) {
 	t.Parallel()
 
 	called := false
-	stub := embedFunc(func(context.Context, embeddings.Request) (embeddings.Result, error) {
+	stub := embedFunc(func(context.Context, embedding.Request) (embedding.Result, error) {
 		called = true
-		return embeddings.Result{}, nil
+		return embedding.Result{}, nil
 	})
 	results := []*Result{{ID: "a", Content: "alpha", Embedding: []float64{9}}, nil}
 	if err := EmbedResults(context.Background(), stub, results); !errors.Is(err, ErrNilResult) {
@@ -92,21 +92,21 @@ func TestEmbedResultsRejectsMalformedBatchBeforeMutation(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		result         embeddings.Result
+		result         embedding.Result
 		wantCountError bool
 	}{
 		{
 			name:           "count mismatch",
-			result:         embeddings.Result{Vectors: []embeddings.Vector{{1, 0}}},
+			result:         embedding.Result{Vectors: []embedding.Vector{{1, 0}}},
 			wantCountError: true,
 		},
 		{
 			name:   "ragged vectors",
-			result: embeddings.Result{Vectors: []embeddings.Vector{{1, 0}, {1}}},
+			result: embedding.Result{Vectors: []embedding.Vector{{1, 0}, {1}}},
 		},
 		{
 			name:   "non-finite vector",
-			result: embeddings.Result{Vectors: []embeddings.Vector{{1, 0}, {float32(math.NaN()), 1}}},
+			result: embedding.Result{Vectors: []embedding.Vector{{1, 0}, {float32(math.NaN()), 1}}},
 		},
 	}
 	for _, tt := range tests {
@@ -117,11 +117,11 @@ func TestEmbedResultsRejectsMalformedBatchBeforeMutation(t *testing.T) {
 				{ID: "b", Content: "beta", Embedding: []float64{7, 6}},
 			}
 			before := [][]float64{append([]float64(nil), results[0].Embedding...), append([]float64(nil), results[1].Embedding...)}
-			stub := embedFunc(func(context.Context, embeddings.Request) (embeddings.Result, error) {
+			stub := embedFunc(func(context.Context, embedding.Request) (embedding.Result, error) {
 				return tt.result, nil
 			})
 			err := EmbedResults(context.Background(), stub, results)
-			if !errors.Is(err, embeddings.ErrInvalidResult) {
+			if !errors.Is(err, embedding.ErrInvalidResult) {
 				t.Fatalf("EmbedResults() error = %v, want ErrInvalidResult", err)
 			}
 			if errors.Is(err, ErrEmbeddingCountMismatch) != tt.wantCountError {
@@ -143,7 +143,7 @@ func TestRerankEmbedding(t *testing.T) {
 		{ID: "b", Content: "beta", Embedding: []float64{0, 1}},
 	}
 
-	ranked := scorer.RerankEmbedding(embeddings.Vector{1, 0}, "alpha", results)
+	ranked := scorer.RerankEmbedding(embedding.Vector{1, 0}, "alpha", results)
 	if ranked[0].ID != "a" {
 		t.Fatalf("RerankEmbedding() top result = %q, want a", ranked[0].ID)
 	}
@@ -152,7 +152,7 @@ func TestRerankEmbedding(t *testing.T) {
 func TestEmbeddingVectors(t *testing.T) {
 	t.Parallel()
 
-	vecs := []embeddings.Vector{{1.0, 2.0}, {3.0, 4.0}}
+	vecs := []embedding.Vector{{1.0, 2.0}, {3.0, 4.0}}
 	got := EmbeddingVectors(vecs)
 	if len(got) != 2 || got[0][0] != 1.0 || got[1][1] != 4.0 {
 		t.Fatalf("EmbeddingVectors = %v", got)

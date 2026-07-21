@@ -71,6 +71,17 @@ assert_rejected() {
 	fi
 }
 
+assert_stale_path_rejected() {
+	repo=$1
+	case_name=$2
+	if (cd "$repo" && ./scripts/check-boundaries.sh) >"$repo/output" 2>&1; then
+		fail "$case_name unexpectedly passed"
+	fi
+	if ! rg -q 'retired indexsink import path found' "$repo/output"; then
+		fail "$case_name did not report the retired import path"
+	fi
+}
+
 mkdir -p "$tmp"
 
 repo=$tmp/clean
@@ -82,18 +93,34 @@ if ! (cd "$repo" && ./scripts/check-boundaries.sh) >"$repo/output" 2>&1; then
 	fail "clean module failed: $(tail -n 1 "$repo/output")"
 fi
 
-repo=$tmp/indexsink
+repo=$tmp/pipeline-indexsink
 new_repo "$repo"
 cat > "$repo/reliquary.go" <<'EOF'
 package reliquary
 EOF
-mkdir -p "$repo/indexsink"
-cat > "$repo/indexsink/sink.go" <<'EOF'
+mkdir -p "$repo/pipeline/indexsink"
+cat > "$repo/pipeline/indexsink/sink.go" <<'EOF'
 package indexsink
 
 import _ "github.com/jackc/pgx/v5"
 EOF
-assert_rejected "$repo" "indexsink direct dependency"
+assert_rejected "$repo" "pipeline/indexsink direct dependency"
+
+repo=$tmp/retired-indexsink-path
+new_repo "$repo"
+cat > "$repo/reliquary.go" <<'EOF'
+package reliquary
+EOF
+cat > "$repo/README.md" <<'EOF'
+Use github.com/dotcommander/reliquary/indexsink.
+EOF
+assert_stale_path_rejected "$repo" "retired indexsink path"
+
+mkdir -p "$repo/docs"
+mv "$repo/README.md" "$repo/docs/MIGRATION-v0.10.md"
+if ! (cd "$repo" && ./scripts/check-boundaries.sh) >"$repo/output" 2>&1; then
+	fail "migration guide exception failed: $(tail -n 1 "$repo/output")"
+fi
 
 repo=$tmp/internal
 new_repo "$repo"

@@ -14,7 +14,7 @@ import (
 func TestHashingEmbeddingContract(t *testing.T) {
 	t.Parallel()
 
-	embeddingtest.Run(t, func() embeddings.Embedder {
+	embeddingtest.Run(t, func() embedding.Embedder {
 		return NewHashing(16)
 	})
 }
@@ -64,7 +64,7 @@ func TestHashingEmbedCancellation(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := NewHashing(8).Embed(ctx, embeddings.Request{Inputs: []string{"x"}})
+	_, err := NewHashing(8).Embed(ctx, embedding.Request{Inputs: []string{"x"}})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Embed canceled error = %v, want context.Canceled", err)
 	}
@@ -73,7 +73,7 @@ func TestHashingEmbedCancellation(t *testing.T) {
 func TestHashingEmbedResult(t *testing.T) {
 	t.Parallel()
 	h := NewHashing(8)
-	got, err := h.Embed(context.Background(), embeddings.Request{Inputs: []string{"alpha", ""}})
+	got, err := h.Embed(context.Background(), embedding.Request{Inputs: []string{"alpha", ""}})
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
 	}
@@ -88,11 +88,11 @@ func TestHashingEmbedResult(t *testing.T) {
 	}
 }
 
-func almostUnit(v embeddings.Vector) bool {
+func almostUnit(v embedding.Vector) bool {
 	return math.Abs(norm(v)-1) < 1e-5
 }
 
-func norm(v embeddings.Vector) float64 {
+func norm(v embedding.Vector) float64 {
 	var sum float64
 	for _, x := range v {
 		sum += float64(x) * float64(x)

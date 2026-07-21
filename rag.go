@@ -79,12 +79,12 @@ func (a *App) Search(ctx context.Context, query string, opts ...SearchOption) ([
 	if cfg.err != nil {
 		return nil, cfg.err
 	}
-	request := embeddings.Request{Inputs: []string{query}}
+	request := embedding.Request{Inputs: []string{query}}
 	embedded, err := a.embedder.Embed(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	if err := embeddings.ValidateResult(request, embedded); err != nil {
+	if err := embedding.ValidateResult(request, embedded); err != nil {
 		return nil, err
 	}
 	items, err := a.index.Search(ctx, IndexQuery{

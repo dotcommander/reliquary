@@ -1,16 +1,16 @@
-# embeddings
+# embedding
 
 ```go
-model := embeddings.ModelRef{Provider: "local", Name: "demo", Dim: 3}
-key := embeddings.CacheKey(model, "hello")
-err := embeddings.ValidateDimensions([]embeddings.Vector{{1, 2, 3}}, model.Dim)
+model := embedding.ModelRef{Provider: "local", Name: "demo", Dim: 3}
+key := embedding.CacheKey(model, "hello")
+err := embedding.ValidateDimensions([]embedding.Vector{{1, 2, 3}}, model.Dim)
 
-request := embeddings.Request{Model: model, Inputs: []string{"hello"}}
-result := embeddings.Result{Model: model, Vectors: []embeddings.Vector{{1, 2, 3}}}
-err = embeddings.ValidateResult(request, result)
+request := embedding.Request{Model: model, Inputs: []string{"hello"}}
+result := embedding.Result{Model: model, Vectors: []embedding.Vector{{1, 2, 3}}}
+err = embedding.ValidateResult(request, result)
 ```
 
-`embeddings` is the provider-neutral contract for embedding requests and dense
+`embedding` is the provider-neutral contract for embedding requests and dense
 vectors.
 
 The package does not call models, choose providers, or own vector-space policy.

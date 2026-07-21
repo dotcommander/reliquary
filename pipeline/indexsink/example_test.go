@@ -9,9 +9,9 @@ import (
 )
 
 // ExampleSink shows a full resumable batch pipeline terminating at reliquary's
-// Index: a byte Reader → Decoder → Mapper → indexsink.Sink. In production code,
+// Index: a byte Reader → Decoder → Mapper → pipeline/indexsink.Sink. In production code,
 // swap the fakes for a real source (files, object storage, a paginated API) and
-// a real Index (storage/sqlite, storage/postgres, ...).
+// a real Index (adapter/sqlite, adapter/postgres, ...).
 func ExampleSink() {
 	idx := &fakeIndex{}
 	sink, err := NewSink(idx, Config{IndexIdentity: "example-space"})

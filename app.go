@@ -50,7 +50,7 @@ var ErrResultIDConflict = indexcontract.ErrResultIDConflict
 // App is a wired retrieval pipeline. Construct it with New, Quickstart, or
 // InMemory.
 type App struct {
-	embedder         embeddings.Embedder
+	embedder         embedding.Embedder
 	index            indexcontract.Index
 	strategy         chunking.Strategy
 	size             int
@@ -109,7 +109,7 @@ func (a *App) ensureReady() error {
 }
 
 // WithEmbedder sets the embedder used for ingestion and queries (required).
-func WithEmbedder(e embeddings.Embedder) Option {
+func WithEmbedder(e embedding.Embedder) Option {
 	return func(a *App) { a.embedder = e }
 }
 

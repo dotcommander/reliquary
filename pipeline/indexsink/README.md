@@ -1,4 +1,4 @@
-# indexsink
+# pipeline/indexsink
 
 ```go
 sink, err := indexsink.NewSink(idx, indexsink.Config{

@@ -17,9 +17,9 @@ var ErrEmbeddingCountMismatch = errors.New("retrieval: embedding count mismatch"
 // batch and therefore rejects sparse result slices before calling the embedder.
 var ErrNilResult = errors.New("retrieval: nil result")
 
-// EmbeddingVector converts a provider-neutral embeddings.Vector into the
+// EmbeddingVector converts a provider-neutral embedding.Vector into the
 // float64 vector space used by retrieval scoring.
-func EmbeddingVector(v embeddings.Vector) []float64 {
+func EmbeddingVector(v embedding.Vector) []float64 {
 	out := make([]float64, len(v))
 	for i, x := range v {
 		out[i] = float64(x)
@@ -29,7 +29,7 @@ func EmbeddingVector(v embeddings.Vector) []float64 {
 
 // EmbeddingVectors converts a batch of provider-neutral embedding vectors into
 // retrieval vectors.
-func EmbeddingVectors(vectors []embeddings.Vector) [][]float64 {
+func EmbeddingVectors(vectors []embedding.Vector) [][]float64 {
 	out := make([][]float64, len(vectors))
 	for i, v := range vectors {
 		out[i] = EmbeddingVector(v)
@@ -40,7 +40,7 @@ func EmbeddingVectors(vectors []embeddings.Vector) [][]float64 {
 // EmbedResults embeds each result's Content with the embedder and attaches the
 // resulting vectors in place. It is the glue between ResultsFromDocuments and
 // scoring, so callers no longer hand-roll the texts -> Embed -> AttachEmbeddings loop.
-func EmbedResults(ctx context.Context, e embeddings.Embedder, results []*Result) error {
+func EmbedResults(ctx context.Context, e embedding.Embedder, results []*Result) error {
 	if len(results) == 0 {
 		return nil
 	}
@@ -51,12 +51,12 @@ func EmbedResults(ctx context.Context, e embeddings.Embedder, results []*Result)
 		}
 		texts[i] = r.Content
 	}
-	request := embeddings.Request{Inputs: texts}
+	request := embedding.Request{Inputs: texts}
 	embedded, err := e.Embed(ctx, request)
 	if err != nil {
 		return err
 	}
-	if err := embeddings.ValidateResult(request, embedded); err != nil {
+	if err := embedding.ValidateResult(request, embedded); err != nil {
 		if len(embedded.Vectors) != len(results) {
 			return fmt.Errorf("%w: %w", ErrEmbeddingCountMismatch, err)
 		}
@@ -70,7 +70,7 @@ func EmbedResults(ctx context.Context, e embeddings.Embedder, results []*Result)
 // count mismatch means the caller's scoring identity is ambiguous. Unlike
 // EmbedResults, it preserves its existing sparse-destination behavior: a nil
 // result consumes the matching vector without mutation.
-func AttachEmbeddings(results []*Result, vectors []embeddings.Vector) error {
+func AttachEmbeddings(results []*Result, vectors []embedding.Vector) error {
 	if len(results) != len(vectors) {
 		return fmt.Errorf("%w: %d results, %d vectors", ErrEmbeddingCountMismatch, len(results), len(vectors))
 	}
@@ -83,7 +83,7 @@ func AttachEmbeddings(results []*Result, vectors []embeddings.Vector) error {
 	return nil
 }
 
-// RerankEmbedding scores results with an embeddings.Vector query.
-func (s *Scorer) RerankEmbedding(queryEmbedding embeddings.Vector, queryText string, results []*Result) []*Result {
+// RerankEmbedding scores results with an embedding.Vector query.
+func (s *Scorer) RerankEmbedding(queryEmbedding embedding.Vector, queryText string, results []*Result) []*Result {
 	return s.Rerank(EmbeddingVector(queryEmbedding), queryText, results)
 }

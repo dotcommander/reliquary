@@ -51,9 +51,9 @@ chunking  ─── text splitting strategies (NewChunker, Chunk)
           retrieval  ─── scoring · reranking · MMR · filtering · eval
 ```
 
-`retrieval` sits at the top of the local-retrieval stack. It imports `vectors`
+`retrieval` sits at the top of the local-retrieval stack. It imports `vector`
 for similarity math, `chunking` for text splitting, and the provider-neutral
-`embeddings` contract for vector adapters. You still produce embeddings
+`embedding` contract for vector adapters. You still produce embeddings
 externally — with any model or provider — and pass them in. The package imposes
 no constraints on how embeddings are generated.
 

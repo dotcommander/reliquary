@@ -48,4 +48,8 @@ if rg -n 'github.com/dotcommander/reliquary/(pipeline/(chunking|document|embeddi
 	fail "stale pre-v0.6 Reliquary import path found"
 fi
 
+if rg -n 'github.com/dotcommander/reliquary/indexsink([[:space:][:punct:]]|$)' --glob '*.go' --glob '*.md' --glob '!docs/MIGRATION-v0.10.md' . >/dev/null; then
+	fail "retired indexsink import path found"
+fi
+
 echo "boundary check: ok"

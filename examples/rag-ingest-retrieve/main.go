@@ -1,7 +1,7 @@
 // Command rag-ingest-retrieve demonstrates an end-to-end retrieval pipeline
 // assembled from reliquary packages the way a real consumer would:
 //
-//	document -> chunking -> embeddings(Embedder seam) -> retrieval(hybrid + MMR)
+//	document -> chunking -> embedding(Embedder seam) -> retrieval(hybrid + MMR)
 //
 // It ingests a tiny in-memory markdown corpus, chunks each document, embeds the
 // chunks through a zero-dependency deterministic embedder (the feature-hashing
@@ -85,7 +85,7 @@ leaves behind an object of extraordinary density with a powerful magnetic field.
 	}
 	fmt.Printf("Ingested %d document(s) into %d chunk(s)\n", len(corpus), len(items))
 
-	// 2. Embed every chunk through the embeddings.Embedder contract. This is the
+	// 2. Embed every chunk through the embedding.Embedder contract. This is the
 	//    seam a real provider (ONNX, OpenAI, ...) plugs into; here we use a
 	//    deterministic hashing-trick embedder so the demo has no dependencies.
 	embedder := embed.NewHashing(embedDim)
@@ -97,7 +97,7 @@ leaves behind an object of extraordinary density with a powerful magnetic field.
 
 	// 4. Embed the query through the identical path.
 	query := "how does the Go garbage collector reclaim memory"
-	qRes, err := embedder.Embed(ctx, embeddings.Request{Model: embedder.Model, Inputs: []string{query}})
+	qRes, err := embedder.Embed(ctx, embedding.Request{Model: embedder.Model, Inputs: []string{query}})
 	if err != nil {
 		return err
 	}

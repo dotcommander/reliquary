@@ -1,4 +1,4 @@
-// Package embed provides a deterministic, dependency-free embeddings.Embedder
+// Package embed provides a deterministic, dependency-free embedding.Embedder
 // for demos, tests, and reliquary.Quickstart. It maps text to vectors with the
 // signed feature-hashing trick, so callers obtain meaningful (non-trivial
 // cosine) vectors without an ONNX runtime or API key.
@@ -23,9 +23,9 @@ import (
 const DefaultHashingDim = 256
 
 // Hashing is a deterministic hashing-trick embedder implementing
-// embeddings.Embedder.
+// embedding.Embedder.
 type Hashing struct {
-	Model embeddings.ModelRef
+	Model embedding.ModelRef
 }
 
 // NewHashing returns a Hashing embedder producing L2-normalized vectors of the
@@ -34,28 +34,28 @@ func NewHashing(dim int) *Hashing {
 	if dim <= 0 {
 		dim = DefaultHashingDim
 	}
-	return &Hashing{Model: embeddings.ModelRef{Provider: "demo", Name: "hashing", Version: "1", Dim: dim}}
+	return &Hashing{Model: embedding.ModelRef{Provider: "demo", Name: "hashing", Version: "1", Dim: dim}}
 }
 
-// Embed satisfies embeddings.Embedder.
-func (h *Hashing) Embed(ctx context.Context, req embeddings.Request) (embeddings.Result, error) {
+// Embed satisfies embedding.Embedder.
+func (h *Hashing) Embed(ctx context.Context, req embedding.Request) (embedding.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return embeddings.Result{}, err
+		return embedding.Result{}, err
 	}
-	vectors := make([]embeddings.Vector, len(req.Inputs))
+	vectors := make([]embedding.Vector, len(req.Inputs))
 	for i, in := range req.Inputs {
 		vectors[i] = HashVector(in, h.Model.Dim)
 	}
-	return embeddings.Result{Model: h.Model, Vectors: vectors}, nil
+	return embedding.Result{Model: h.Model, Vectors: vectors}, nil
 }
 
 // HashVector maps text to an L2-normalized []float32 via signed feature hashing.
 // Non-positive dimensions use DefaultHashingDim.
-func HashVector(text string, dim int) embeddings.Vector {
+func HashVector(text string, dim int) embedding.Vector {
 	if dim <= 0 {
 		dim = DefaultHashingDim
 	}
-	v := make(embeddings.Vector, dim)
+	v := make(embedding.Vector, dim)
 	for _, tok := range tokenize(text) {
 		hsh := fnv1a64(tok)
 		idx := int(hsh % uint64(dim))

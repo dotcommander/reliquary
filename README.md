@@ -1,11 +1,11 @@
 # Reliquary
 
-Reliquary is a Go toolkit for document ingestion and retrieval. The root
-facade combines chunking, embeddings, candidate retrieval, hybrid scoring, and
-optional MMR reranking behind a small `App` API.
+Reliquary helps Go applications turn documents into useful context for AI
+features. Start in memory, then bring your own embedder and index when you need
+production storage and retrieval quality.
 
 ```sh
-go get github.com/dotcommander/reliquary@v0.9.0
+go get github.com/dotcommander/reliquary@v0.10.0
 ```
 
 ```go
@@ -13,7 +13,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
 
 	"github.com/dotcommander/reliquary"
 	"github.com/dotcommander/reliquary/document"
@@ -22,103 +22,114 @@ import (
 func main() {
 	ctx := context.Background()
 	app := reliquary.Quickstart()
-	if _, err := app.Ingest(ctx, document.Document{
-		ID: "doc-1", Text: "Go uses a concurrent garbage collector.",
-	}); err != nil {
-		log.Fatal(err)
-	}
-	results, err := app.Search(ctx, "garbage collector", reliquary.TopK(5))
+
+	_, err := app.Ingest(ctx, document.Document{
+		ID: "notes",
+		Text: "The Go build cache lives in ~/Library/Caches/go-build.",
+	})
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	log.Printf("found %d result(s)", len(results))
+
+	hits, err := app.Search(ctx, "where is the Go build cache?", reliquary.TopK(1))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(hits[0].Content)
 }
 ```
 
-This quickstart uses deterministic in-memory embeddings for demos and tests.
-Production applications should inject their own embedder and index with
-`New`, `WithEmbedder`, `WithIndex`, and `WithIndexIdentity`.
-Custom embedders must return exactly one finite, positive-dimension vector per
-input in the same order and should run the shared `embedding/embeddingtest`
-contract suite. Reliquary validates embedder results before mutating retrieval
-objects or accessing an index.
+`Quickstart` uses a deterministic in-memory embedder and index. It is useful for
+examples and tests, but it is not a production embedding model.
 
-The index identity is required for `New` and must change whenever the embedding
-space or chunking policy changes. A mismatched populated index is rejected even
-when dimensions match. To rebuild intentionally, call `app.ResetIndex(ctx)`;
-this permanently deletes every indexed chunk before re-ingestion. `Quickstart`
-and `InMemory` supply a deterministic identity for their built-in hashing setup.
-The first non-nil indexed result establishes the identity and the first embedded
-result establishes the vector dimension. Deletes and replacements preserve that
-space even after the index becomes empty; only `ResetIndex` clears it.
+## What you can build
 
-Restrict candidate retrieval by reserved fields (`id`, `document_id`, or
-`filename`) or scalar metadata while retaining final reranking and MMR:
+- Give an AI assistant useful context from project notes, READMEs, runbooks, or
+  issue summaries. `App.Ingest` chunks and indexes each document; `App.Search`
+  returns the best passages to add to your model prompt.
+- Keep retrieval inside the current project or tenant with scalar metadata:
+
+  ```go
+  _, err := app.Ingest(ctx, document.Document{
+      ID:       "runbook",
+      Text:     "Restart the worker with launchctl kickstart.",
+      Metadata: document.Metadata{"project": "reliquary"},
+  })
+  hits, err := app.Search(ctx, "restart the worker",
+      reliquary.WithFilter(map[string]any{"project": "reliquary"}),
+      reliquary.TopK(3),
+  )
+  ```
+
+  Filters scope retrieval; they are not an authorization boundary.
+- Build a less repetitive context pack by fetching more candidates than you
+  return and using MMR to balance relevance with diversity:
+
+  ```go
+  hits, err := app.Search(ctx, question,
+      reliquary.CandidateLimit(20),
+      reliquary.TopK(5),
+      reliquary.WithMMR(0.5),
+  )
+  ```
+
+- Feed a paginated API, object store, or file collection through
+  `pipeline/ingest`, then persist mapped results with `pipeline/indexsink`.
+
+## Production wiring
+
+Production applications inject an `embedding.Embedder`, an `index.Index`, and
+an explicit index identity:
 
 ```go
-results, err := app.Search(ctx, "search text",
-	reliquary.WithFilter(map[string]any{"project": "reliquary"}),
-	reliquary.TopK(5),
+app, err := reliquary.New(
+	reliquary.WithEmbedder(embedder),
+	reliquary.WithIndex(idx),
+	reliquary.WithIndexIdentity("text-embedding-3-small:v1#smart-boundary"),
 )
 ```
 
-Filters use backend-independent JSON-scalar equality. Metadata keys must be
-present, explicit `nil` matches only JSON null, strings and booleans are
-type-exact, and finite numbers compare by exact JSON numeric value across Go
-numeric types. Reserved fields match strings only. NaN, infinities, and compound
-filter values are rejected before query embedding.
+The identity names the embedding space and chunking policy stored in the index.
+Reliquary rejects reads and writes with a different identity even when the
+vector dimensions match. Change the identity and call `ResetIndex` before a
+deliberate rebuild.
 
-The default index is concurrency-safe and in-memory. Use `WithIndex` to inject
-another implementation.
+Reliquary includes opt-in adapters for OpenAI embeddings, PostgreSQL/pgvector,
+and SQLite/FTS5. Database constructors validate configuration but do not run
+migrations; call the adapter's `Migrate(ctx)` explicitly. Clients, database
+handles, credentials, transports, and retry policy remain caller-owned.
 
-`App.Ingest` treats each supplied document as a complete revision: all prior
-chunks for those document IDs are atomically replaced across the whole call. A
-document that produces no chunks deletes its prior revision. IDs must be
-non-blank and unique within one call; invalid batches fail before embedding.
-`Index.Upsert` remains merge-by-result-ID, while `Index.DeleteDocument` remains
-an explicit deletion operation that uses exact `Result.DocumentID` ownership;
-result ID prefixes never imply ownership. Replacement result IDs must also be
-unique and must not collide with results owned by documents outside the
-replacement batch. Index writes and searches reject NaN and infinities in
-vectors without changing the established index space; empty embeddings remain
-valid for lexical-only results.
+`App.Ingest` treats each document as a complete revision and atomically replaces
+its previous chunks. Custom indexes must implement `index.Index`, including
+`ReplaceDocuments`, and should run the shared `index/indextest` contract suite.
+Custom embedders should run `embedding/embeddingtest`.
 
-Custom indexes must implement the mandatory atomic batch method
-`ReplaceDocuments(ctx, []DocumentReplacement) error` in addition to `Upsert`,
-`DeleteDocument`, and `Search`. This is a compile-time interface change. Every
-implementation should run the shared `index/indextest` contract suite.
+## Packages
 
-## Adapters
+| Package | Purpose |
+|---|---|
+| `reliquary` | High-level `App` facade, options, and constructors |
+| `document` | Document value type |
+| `embedding` | Provider-neutral `Embedder`, request, result, and vector contracts |
+| `embed` | Deterministic hashing embedder for demos and tests |
+| `index` | Candidate retrieval contract, in-memory implementation, and `indextest` suite |
+| `chunking` | Boundary-aware text, code, sentence, and heading splitters |
+| `retrieval` | Hybrid scoring, MMR diversification, filtering, and evaluation |
+| `pipeline/ingest` | Generic resumable ingestion contracts and runner |
+| `pipeline/indexsink` | `pipeline/ingest` sink backed by `index.Index` |
+| `pipeline/lexical` | Lexical analysis, BM25, and result fusion |
+| `dedup`, `textutil`, `vector` | Retrieval primitives, vector math, quantization, and clustering |
+| `adapter/openai` | OpenAI embedding adapter |
+| `adapter/postgres`, `adapter/sqlite` | Persistent candidate-retrieval adapters |
 
-- `adapter/openai` adapts an injected `openai.Client` to the embedding contract.
-- `adapter/postgres` provides bounded pgvector candidate retrieval.
-- `adapter/sqlite` provides bounded FTS5 candidate retrieval with final ranking
-  performed by Reliquary. Its configured/default candidate bound also applies
-  when `IndexQuery.Limit` is zero; positive limits are never truncated below
-  the requested count.
+## Documentation
 
-Database constructors validate configuration and perform no migrations. Call
-the adapter's `Migrate(ctx)` method explicitly before use. Callers retain
-ownership of database pools, connections, credentials, transports, and retry
-policy. SQLite and PostgreSQL migrations also create and legacy-backfill the
-adapter-owned index-space state table used to preserve identity and dimension
-until reset.
-
-## Ownership
-
-Product memory, graph behavior, and generic application infrastructure are
-intentionally outside this module. See [the v0.5 migration guide](docs/MIGRATION-v0.5.md)
-for removed ownership surfaces and [the v0.6 migration guide](docs/MIGRATION-v0.6.md)
-for the current public import paths.
-
-Reliquary v0.7 uses `Index` as its only persistence seam. The deprecated
-`Store` compatibility API was removed.
-
-## Project policies
-
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
-- [MIT License](LICENSE)
+- [Technical specification and invariants](docs/SPECIFICATION.md)
+- [Architecture and package boundaries](ARCHITECTURE.md)
+- [Migration to v0.10](docs/MIGRATION-v0.10.md)
+- [Migration to v0.6](docs/MIGRATION-v0.6.md)
+- [Migration to v0.5](docs/MIGRATION-v0.5.md)
+- [Runnable examples](examples)
 
 ## Verify
 
@@ -130,3 +141,5 @@ go test -race . ./index/... ./adapter/...
 ./scripts/check-boundaries.sh
 ./scripts/verify-modules.sh
 ```
+
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)
