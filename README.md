@@ -5,7 +5,7 @@ facade combines chunking, embeddings, candidate retrieval, hybrid scoring, and
 optional MMR reranking behind a small `App` API.
 
 ```sh
-go get github.com/dotcommander/reliquary@v0.8.0
+go get github.com/dotcommander/reliquary@v0.9.0
 ```
 
 ```go

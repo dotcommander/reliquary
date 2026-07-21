@@ -127,4 +127,3 @@ func TestSearcherFuncNil(t *testing.T) {
 		t.Fatalf("nil SearcherFunc returned %v, %v", got, err)
 	}
 }
-
