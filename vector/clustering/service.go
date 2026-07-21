@@ -21,9 +21,15 @@
 // scoring, and HAC with CutDendrogram for hierarchical clustering.
 package clustering
 
+import (
+	"fmt"
+	"math"
+)
+
 // ClusterService defines the interface for clustering embeddings.
 type ClusterService interface {
-	// Cluster groups embeddings into clusters.
+	// Cluster groups embeddings into clusters. Empty input succeeds with an empty
+	// result; malformed non-empty embeddings return a contextual error.
 	Cluster(embeddings [][]float64, opts ClusterOptions) (*ClusterResult, error)
 }
 
@@ -79,6 +85,9 @@ func (s *service) Cluster(embeddings [][]float64, opts ClusterOptions) (*Cluster
 			Silhouette:  0,
 		}, nil
 	}
+	if err := validateEmbeddings(embeddings); err != nil {
+		return nil, err
+	}
 
 	algorithm := opts.Algorithm
 	if algorithm == "" {
@@ -93,6 +102,24 @@ func (s *service) Cluster(embeddings [][]float64, opts ClusterOptions) (*Cluster
 	default:
 		return s.clusterGreedy(embeddings, opts)
 	}
+}
+
+func validateEmbeddings(embeddings [][]float64) error {
+	dim := len(embeddings[0])
+	if dim == 0 {
+		return fmt.Errorf("clustering: embedding 0 has zero dimensions")
+	}
+	for row, embedding := range embeddings {
+		if len(embedding) != dim {
+			return fmt.Errorf("clustering: embedding %d has dimension %d, want %d", row, len(embedding), dim)
+		}
+		for column, value := range embedding {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("clustering: embedding %d value %d is non-finite", row, column)
+			}
+		}
+	}
+	return nil
 }
 
 // clusterKMeans performs K-means clustering with optional auto-k via silhouette.

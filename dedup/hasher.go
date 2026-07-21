@@ -4,14 +4,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strings"
 	"unicode"
-)
-
-var (
-	whitespaceRegex  = regexp.MustCompile(`\s+`)
-	nonAlphanumRegex = regexp.MustCompile(`[^a-z0-9\s]`)
 )
 
 // HashingStrategy defines different approaches to content hashing
@@ -108,10 +102,7 @@ func (ch *ContentHasher) simpleHash(content string) string {
 
 // normalizedHash creates a hash of normalized content (whitespace/case insensitive)
 func (ch *ContentHasher) normalizedHash(content string) string {
-	// Normalize whitespace and case
-	normalized := strings.ToLower(content)
-	normalized = whitespaceRegex.ReplaceAllString(normalized, " ")
-	normalized = strings.TrimSpace(normalized)
+	normalized := strings.Join(strings.Fields(strings.ToLower(content)), " ")
 
 	h := sha256.Sum256([]byte(normalized))
 	return fmt.Sprintf("%x", h)[:16]
@@ -199,13 +190,23 @@ func (ch *ContentHasher) simHash(content string) string {
 
 // createShingles creates n-gram shingles from content
 func (ch *ContentHasher) createShingles(content string, n int) []string {
-	// Normalize content
-	content = strings.ToLower(content)
-	content = nonAlphanumRegex.ReplaceAllString(content, "")
-	content = whitespaceRegex.ReplaceAllString(content, " ")
+	normalized := normalizeSimHashContent(content)
+	if normalized == "" {
+		if strings.TrimSpace(content) == "" {
+			return nil
+		}
+
+		// Retain a feature for non-whitespace input containing no searchable
+		// Unicode characters. The prefix keeps raw fallbacks in a separate
+		// feature namespace from ordinarily normalized content.
+		return []string{"\x00raw:" + strings.ToLower(content)}
+	}
 
 	var shingles []string
-	runes := []rune(content)
+	runes := []rune(normalized)
+	if len(runes) < n {
+		return []string{normalized}
+	}
 
 	for i := 0; i <= len(runes)-n; i++ {
 		shingle := string(runes[i : i+n])
@@ -213,6 +214,29 @@ func (ch *ContentHasher) createShingles(content string, n int) []string {
 			shingles = append(shingles, shingle)
 		}
 	}
+	if len(shingles) == 0 {
+		return []string{normalized}
+	}
 
 	return shingles
+}
+
+func normalizeSimHashContent(content string) string {
+	var normalized strings.Builder
+	lastWasSpace := false
+
+	for _, r := range strings.ToLower(content) {
+		switch {
+		case unicode.IsLetter(r), unicode.IsNumber(r), unicode.IsMark(r):
+			normalized.WriteRune(r)
+			lastWasSpace = false
+		case unicode.IsSpace(r):
+			if !lastWasSpace {
+				normalized.WriteByte(' ')
+				lastWasSpace = true
+			}
+		}
+	}
+
+	return strings.TrimSpace(normalized.String())
 }

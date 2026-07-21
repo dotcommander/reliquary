@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
@@ -32,6 +33,10 @@ func TestNewRequiresEmbedder(t *testing.T) {
 	}
 	if _, err := reliquary.New(reliquary.WithEmbedder(nil)); !errors.Is(err, reliquary.ErrNoEmbedder) {
 		t.Fatalf("New(WithEmbedder(nil)) error = %v, want ErrNoEmbedder", err)
+	}
+	var typedNil *resultEmbedder
+	if _, err := reliquary.New(reliquary.WithEmbedder(typedNil), reliquary.WithIndexIdentity("test")); !errors.Is(err, reliquary.ErrNoEmbedder) {
+		t.Fatalf("New(WithEmbedder(typed nil)) error = %v, want ErrNoEmbedder", err)
 	}
 }
 
@@ -93,7 +98,7 @@ func TestAppIndexIdentityPreventsSameDimensionMixing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Ingest(ctx, document.Document{ID: "two", Text: "identity two"}); !errors.Is(err, reliquary.ErrIdentityMismatch) {
+	if _, err := second.Ingest(ctx, document.Document{ID: "one", Text: "replacement identity"}); !errors.Is(err, reliquary.ErrIdentityMismatch) {
 		t.Fatalf("Ingest mismatch error = %v", err)
 	}
 	if _, err := second.Search(ctx, "identity"); !errors.Is(err, reliquary.ErrIdentityMismatch) {
@@ -223,14 +228,44 @@ func TestWithFilterRejectsCompoundValueBeforeIndexSearch(t *testing.T) {
 	}
 }
 
+func TestWithFilterRejectsNonFiniteNumberBeforeEmbedding(t *testing.T) {
+	t.Parallel()
+	embedErr := errors.New("embedder must not be called")
+	idx := &recordingIndex{}
+	app, err := reliquary.New(reliquary.WithEmbedder(errEmbedder{err: embedErr}), reliquary.WithIndex(idx), reliquary.WithIndexIdentity("test"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = app.Search(context.Background(), "go", reliquary.WithFilter(map[string]any{"score": math.NaN()}))
+	if err == nil || errors.Is(err, embedErr) || !strings.Contains(err.Error(), "must be finite") {
+		t.Fatalf("Search error = %v, want pre-embedding finite-number error", err)
+	}
+	if idx.searchCalls != 0 {
+		t.Fatalf("index Search calls = %d, want 0", idx.searchCalls)
+	}
+}
+
 func TestWithIndexNilFallsBackToDefault(t *testing.T) {
 	t.Parallel()
-	app, err := reliquary.New(reliquary.WithEmbedder(embed.NewHashing(64)), reliquary.WithIndex(nil), reliquary.WithIndexIdentity("test"))
-	if err != nil {
-		t.Fatalf("New with default fallback: %v", err)
-	}
-	if hits, err := app.Search(context.Background(), "go"); err != nil || len(hits) != 0 {
-		t.Fatalf("default fallback Search = %#v, %v", hits, err)
+	var typedNil *recordingIndex
+	for _, tt := range []struct {
+		name  string
+		index reliquary.Index
+	}{
+		{name: "nil"},
+		{name: "typed nil", index: typedNil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			app, err := reliquary.New(reliquary.WithEmbedder(embed.NewHashing(64)), reliquary.WithIndex(tt.index), reliquary.WithIndexIdentity("test"))
+			if err != nil {
+				t.Fatalf("New with default fallback: %v", err)
+			}
+			if hits, err := app.Search(context.Background(), "go"); err != nil || len(hits) != 0 {
+				t.Fatalf("default fallback Search = %#v, %v", hits, err)
+			}
+		})
 	}
 }
 
@@ -330,6 +365,68 @@ func TestContextCancellation(t *testing.T) {
 	}
 }
 
+func TestIngestRejectsInvalidDocumentIDsBeforeEmbedding(t *testing.T) {
+	t.Parallel()
+	embedErr := errors.New("embedder must not be called")
+	app, err := reliquary.New(reliquary.WithEmbedder(errEmbedder{err: embedErr}), reliquary.WithIndexIdentity("test"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := app.Ingest(context.Background(), document.Document{ID: " \t", Text: "content"}); !errors.Is(err, reliquary.ErrInvalidDocumentID) {
+		t.Fatalf("blank ID error = %v, want ErrInvalidDocumentID", err)
+	}
+	if _, err := app.Ingest(context.Background(), document.Document{ID: "same", Text: "one"}, document.Document{ID: "same", Text: "two"}); !errors.Is(err, reliquary.ErrDuplicateDocumentID) {
+		t.Fatalf("duplicate ID error = %v, want ErrDuplicateDocumentID", err)
+	}
+}
+
+func TestIngestWithNoDocumentsDoesNotWriteIndex(t *testing.T) {
+	t.Parallel()
+	idx := &recordingIndex{upsertErr: errors.New("index must not be called")}
+	app, err := reliquary.New(reliquary.WithEmbedder(embed.NewHashing(16)), reliquary.WithIndex(idx), reliquary.WithIndexIdentity("test"))
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if n, err := app.Ingest(context.Background()); err != nil || n != 0 {
+		t.Fatalf("Ingest() = %d, %v, want 0, nil", n, err)
+	}
+	if idx.replaceCalls != 0 {
+		t.Fatalf("ReplaceDocuments calls = %d, want 0", idx.replaceCalls)
+	}
+}
+
+func TestIngestReplacesCompleteDocumentRevision(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	idx := reliquary.NewMemoryIndex()
+	app, err := reliquary.New(
+		reliquary.WithEmbedder(embed.NewHashing(16)),
+		reliquary.WithIndex(idx),
+		reliquary.WithIndexIdentity("test"),
+		reliquary.WithChunker(chunking.SmartBoundary, 20, 0),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if n, err := app.Ingest(ctx, document.Document{ID: "doc", Text: strings.Repeat("alpha beta gamma ", 8)}); err != nil || n < 2 {
+		t.Fatalf("initial Ingest = %d, %v, want multiple chunks", n, err)
+	}
+	if n, err := app.Ingest(ctx, document.Document{ID: "doc", Text: "short revision"}); err != nil || n != 1 {
+		t.Fatalf("short Ingest = %d, %v, want one chunk", n, err)
+	}
+	got, err := idx.Search(ctx, reliquary.IndexQuery{Identity: "test", Filter: map[string]any{"document_id": "doc"}})
+	if err != nil || len(got) != 1 || got[0].Content != "short revision" {
+		t.Fatalf("after short revision = %#v, %v", got, err)
+	}
+	if n, err := app.Ingest(ctx, document.Document{ID: "doc", Text: ""}); err != nil || n != 0 {
+		t.Fatalf("empty Ingest = %d, %v", n, err)
+	}
+	got, err = idx.Search(ctx, reliquary.IndexQuery{Identity: "test", Filter: map[string]any{"document_id": "doc"}})
+	if err != nil || len(got) != 0 {
+		t.Fatalf("after empty revision = %#v, %v", got, err)
+	}
+}
+
 func TestErrorPropagation(t *testing.T) {
 	t.Parallel()
 	embedErr := errors.New("embed failed")
@@ -356,6 +453,61 @@ func TestErrorPropagation(t *testing.T) {
 	}
 	if _, err := app.Search(ctx, "go"); !errors.Is(err, indexErr) {
 		t.Fatalf("Search index error = %v, want %v", err, indexErr)
+	}
+}
+
+func TestIngestRejectsMalformedEmbeddingBeforeIndexMutation(t *testing.T) {
+	t.Parallel()
+
+	idx := &recordingIndex{}
+	app, err := reliquary.New(
+		reliquary.WithEmbedder(resultEmbedder{result: embeddings.Result{}}),
+		reliquary.WithIndex(idx),
+		reliquary.WithIndexIdentity("test"),
+	)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = app.Ingest(context.Background(), document.Document{ID: "doc", Text: "content"})
+	if !errors.Is(err, embeddings.ErrInvalidResult) || !errors.Is(err, retrieval.ErrEmbeddingCountMismatch) {
+		t.Fatalf("Ingest error = %v, want ErrInvalidResult and ErrEmbeddingCountMismatch", err)
+	}
+	if idx.replaceCalls != 0 {
+		t.Fatalf("ReplaceDocuments calls = %d, want 0", idx.replaceCalls)
+	}
+}
+
+func TestSearchRejectsMalformedEmbeddingBeforeIndexAccess(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result embeddings.Result
+	}{
+		{name: "count mismatch", result: embeddings.Result{}},
+		{name: "empty vector", result: embeddings.Result{Vectors: []embeddings.Vector{{}}}},
+		{name: "declared dimension mismatch", result: embeddings.Result{Model: embeddings.ModelRef{Dim: 3}, Vectors: []embeddings.Vector{{1, 0}}}},
+		{name: "non-finite vector", result: embeddings.Result{Vectors: []embeddings.Vector{{float32(math.Inf(1)), 0}}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			idx := &recordingIndex{}
+			app, err := reliquary.New(
+				reliquary.WithEmbedder(resultEmbedder{result: tt.result}),
+				reliquary.WithIndex(idx),
+				reliquary.WithIndexIdentity("test"),
+			)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			if _, err := app.Search(context.Background(), "query"); !errors.Is(err, embeddings.ErrInvalidResult) {
+				t.Fatalf("Search error = %v, want ErrInvalidResult", err)
+			}
+			if idx.searchCalls != 0 {
+				t.Fatalf("Index.Search calls = %d, want 0", idx.searchCalls)
+			}
+		})
 	}
 }
 
@@ -396,20 +548,33 @@ type errEmbedder struct {
 
 type fixedEmbedder struct{ vector embeddings.Vector }
 
+type resultEmbedder struct {
+	result embeddings.Result
+}
+
+func (e resultEmbedder) Embed(context.Context, embeddings.Request) (embeddings.Result, error) {
+	return e.result, nil
+}
+
 func (e fixedEmbedder) Embed(context.Context, embeddings.Request) (embeddings.Result, error) {
 	return embeddings.Result{Vectors: []embeddings.Vector{e.vector}}, nil
 }
 
 type recordingIndex struct {
-	searchCalls int
-	lastQuery   reliquary.IndexQuery
-	results     []*retrieval.Result
-	searchErr   error
-	upsertErr   error
+	searchCalls  int
+	replaceCalls int
+	lastQuery    reliquary.IndexQuery
+	results      []*retrieval.Result
+	searchErr    error
+	upsertErr    error
 }
 
 func (i *recordingIndex) Upsert(context.Context, []*retrieval.Result) error { return i.upsertErr }
-func (i *recordingIndex) DeleteDocument(context.Context, string) error      { return nil }
+func (i *recordingIndex) ReplaceDocuments(context.Context, []reliquary.DocumentReplacement) error {
+	i.replaceCalls++
+	return i.upsertErr
+}
+func (i *recordingIndex) DeleteDocument(context.Context, string) error { return nil }
 func (i *recordingIndex) Search(_ context.Context, query reliquary.IndexQuery) ([]*retrieval.Result, error) {
 	i.searchCalls++
 	i.lastQuery = query

@@ -97,6 +97,11 @@ if err != nil {
 fmt.Println(report.Metrics.RecallAtK)
 ```
 
+`EvaluateRun` requires the run to cover every query in the fixture and rejects
+unknown query IDs. Run validation rejects blank or duplicate result IDs in the
+final list and every captured stage. Lower-level metric and tuning helpers
+canonicalize repeated result IDs by retaining the first occurrence.
+
 Capture staged hybrid retrieval without encoding provider query syntax:
 
 ```go

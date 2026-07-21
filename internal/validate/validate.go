@@ -4,6 +4,7 @@ package validate
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -13,6 +14,21 @@ var (
 	// ErrInvalid reports a value outside its valid semantic space.
 	ErrInvalid = errors.New("invalid")
 )
+
+// IsNil reports whether value is nil, including an interface containing a
+// typed nil value of a nilable kind.
+func IsNil(value any) bool {
+	if value == nil {
+		return true
+	}
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+		return reflected.IsNil()
+	default:
+		return false
+	}
+}
 
 // NonEmpty returns an error when value is empty after trimming whitespace.
 func NonEmpty(field, value string) error {

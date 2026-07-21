@@ -170,7 +170,7 @@ Any application-owned embedding client can satisfy this narrow interface.
 // embedder satisfies chunking.BatchEmbedder
 sc, err := chunking.NewSemanticChunker(embedder, chunking.SemanticOpts{})
 if err != nil {
-    log.Fatal(err) // ErrNilEmbedder if embedder is nil
+    log.Fatal(err) // ErrNilEmbedder if embedder is nil or holds a typed nil
 }
 
 chunks := sc.ChunkSemantic(ctx, text, 1200, 100)
@@ -236,10 +236,12 @@ if !ok {
 chunks := plan.Chunks
 ```
 
-`SemanticPlan` includes the accepted `Units`, adjacent `Similarities`, chosen
-`Breaks`, and final `Chunks`. The planner rejects too few units, embedding
-count mismatches, dimension mismatches, empty vectors, and zero vectors. It
-does not call an embedder.
+`SemanticPlan` includes the accepted `Units`, cosine similarities between
+adjacent embeddings, chosen `Breaks`, and final `Chunks`. The planner reads but
+does not normalize or otherwise mutate the caller-owned embeddings. It rejects
+too few units, embedding count mismatches, dimension mismatches, empty vectors,
+zero vectors, and vectors containing NaN or infinity. It does not call an
+embedder.
 
 ---
 
@@ -479,4 +481,4 @@ sentences := chunking.SplitSentences(text)
 | Error                  | When                                                        |
 |------------------------|-------------------------------------------------------------|
 | `ErrUnknownStrategy`   | `NewChunker` receives an unregistered strategy string.      |
-| `ErrNilEmbedder`       | `NewSemanticChunker` receives a nil embedder.               |
+| `ErrNilEmbedder`       | `NewSemanticChunker` receives a nil or typed-nil embedder.  |

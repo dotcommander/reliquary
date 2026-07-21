@@ -46,13 +46,16 @@ type BinaryIndex struct {
 }
 
 // NewBinaryIndex builds a BinaryIndex from raw little-endian float32 blobs.
-// Rows with invalid blobs or missing group/chunk metadata are skipped.
+// Rows with invalid or non-finite blobs, missing group/chunk metadata, or
+// duplicate keys are skipped. For duplicate keys, the first valid row wins.
 func NewBinaryIndex(blobs [][]byte, groups []string, chunkIndices []int, dims int) *BinaryIndex {
 	idx, _ := NewBinaryIndexChecked(blobs, groups, chunkIndices, dims)
 	return idx
 }
 
-// NewBinaryIndexChecked builds a BinaryIndex and reports skipped rows and build errors.
+// NewBinaryIndexChecked builds a BinaryIndex and reports skipped rows and build
+// errors. Rows are validated before their keys are reserved, so the first valid
+// row for each (Group, ChunkIndex) key is retained.
 func NewBinaryIndexChecked(blobs [][]byte, groups []string, chunkIndices []int, dims int) (*BinaryIndex, IndexBuildReport) {
 	idx := &BinaryIndex{dims: dims}
 	report := IndexBuildReport{InputRows: len(blobs)}
@@ -63,6 +66,7 @@ func NewBinaryIndexChecked(blobs [][]byte, groups []string, chunkIndices []int, 
 
 	vecs := make([][]float32, 0, len(blobs))
 	entries := make([]BinaryIndexEntry, 0, len(blobs))
+	seenKeys := make(map[IndexKey]struct{}, len(blobs))
 
 	for i, blob := range blobs {
 		if i >= len(groups) || i >= len(chunkIndices) {
@@ -78,6 +82,16 @@ func NewBinaryIndexChecked(blobs [][]byte, groups []string, chunkIndices []int, 
 			report.DimensionMismatch++
 			continue
 		}
+		if !finiteFloat32s(vec) {
+			report.SkippedBadBlob++
+			continue
+		}
+		key := IndexKey{Group: groups[i], ChunkIndex: chunkIndices[i]}
+		if _, exists := seenKeys[key]; exists {
+			report.SkippedDuplicateKey++
+			continue
+		}
+		seenKeys[key] = struct{}{}
 		vecs = append(vecs, vec)
 		entries = append(entries, BinaryIndexEntry{
 			Group:      groups[i],
@@ -120,11 +134,15 @@ func (idx *BinaryIndex) SearchCandidates(queryVec []float32) ([]HammingCandidate
 // SearchCandidatesLimit returns up to limit best Hamming-distance candidates
 // for exact re-ranking. A limit larger than the index size is clamped; a
 // non-positive limit returns an empty candidate slice for a valid query.
+// Non-finite queries are rejected.
 func (idx *BinaryIndex) SearchCandidatesLimit(queryVec []float32, limit int) ([]HammingCandidate, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
 	if len(idx.entries) == 0 {
+		return nil, false
+	}
+	if !finiteFloat32s(queryVec) {
 		return nil, false
 	}
 

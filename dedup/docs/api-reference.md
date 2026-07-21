@@ -72,9 +72,9 @@ If you need concurrent indexing of independent datasets, create one `Detector` p
 | Constant | Value | Behavior |
 |---|---|---|
 | `SimpleHash` | `"simple"` | SHA-256 of the raw content string; byte-identical content only. |
-| `NormalizedHash` | `"normalized"` | Lowercases the content and collapses all whitespace to single spaces before hashing. Two strings differing only in case or spacing are treated as duplicates. |
+| `NormalizedHash` | `"normalized"` | Lowercases the content and collapses all Unicode whitespace to single ASCII spaces before hashing. Two strings differing only in case or spacing are treated as duplicates. |
 | `SemanticHash` | `"semantic"` | Parses the content line-by-line, tagging Markdown headers (`# …` → `HEADER:`), list items (`-`/`*` → `LIST:`), code fences (` ``` ` → `CODE_BLOCK`), and body text (` TEXT:`). Blank lines are dropped. Produces identical hashes for documents with the same structural elements in the same order, ignoring decorative whitespace. |
-| `SimHash` | `"simhash"` | Produces a 64-bit locality-sensitive hash via character 3-gram (shingle) features. Similar content yields hashes with few differing hex characters. **Required** for `FindNearDuplicates`. |
+| `SimHash` | `"simhash"` | Produces a 64-bit locality-sensitive hash via Unicode letter, number, and combining-mark character 3-gram (shingle) features. Unicode whitespace is collapsed and ordinary punctuation is dropped. Similar content yields hashes with few differing hex characters. **Required** for `FindNearDuplicates`. |
 
 ---
 
@@ -277,11 +277,13 @@ fmt.Printf("%.1f%% duplicates\n", stats["deduplication_rate"].(float64)*100)
 
 **`SimpleHash`** — use when content must be byte-for-byte identical. A trailing space or different line ending produces a different hash. Good for detecting verbatim copies where formatting is controlled (e.g., database records, generated output).
 
-**`NormalizedHash`** — use when content may differ only in case or whitespace (extra spaces, mixed indentation, Windows vs Unix line endings). Two strings that are identical after `strings.ToLower` and whitespace collapse hash equally. Does not strip punctuation or Markdown syntax.
+**`NormalizedHash`** — use when content may differ only in case or whitespace (extra spaces, mixed indentation, Windows vs Unix line endings, or Unicode spaces such as NBSP and EM SPACE). Two strings that are identical after `strings.ToLower`, `strings.Fields`, and a single-space join hash equally. Does not strip punctuation or Markdown syntax.
 
 **`SemanticHash`** — use for Markdown documents where you want to treat structurally equivalent content as duplicates even when decorative details differ. A document with an extra blank line, or with `*item*` reformatted to `- item`, may produce the same hash. Non-empty body-text lines contribute a `TEXT:` element after lowercasing and whitespace normalization, including very short lines.
 
-**`SimHash`** — use when you expect near-duplicates: lightly edited versions, paraphrases, or documents where a paragraph was added or removed. `SimHash` is the only strategy that enables `FindNearDuplicates`. `FindDuplicates` still works with `SimHash` but requires an exact 64-bit fingerprint match, which is unlikely for truly different content.
+**`SimHash`** — use when you expect near-duplicates: lightly edited versions, paraphrases, or documents where a paragraph was added or removed. It preserves Unicode letters, numbers, and combining marks, collapses Unicode whitespace, and drops ordinary punctuation before shingling. Normalized input shorter than the configured shingle size contributes one complete-content feature. Non-whitespace input that otherwise normalizes to empty (such as punctuation-only text) contributes a prefixed lowercase raw-content feature, while empty and whitespace-only inputs retain the empty fingerprint. `SimHash` is the only strategy that enables `FindNearDuplicates`. `FindDuplicates` still works with `SimHash` but requires an exact 64-bit fingerprint match, which is unlikely for truly different content.
+
+Fingerprints intentionally change for previously defective short, Unicode-only, and punctuation-only inputs. Rebuild any caller-persisted SimHash fingerprints for those inputs after upgrading; the package itself stores no durable fingerprints. Long ASCII fingerprints are unchanged.
 
 Only `SimHash` supports `FindNearDuplicates`. Calling `FindNearDuplicates` with any other strategy returns an empty non-nil slice immediately.
 

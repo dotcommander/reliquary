@@ -4,7 +4,6 @@ package inmem
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 
 	indexcontract "github.com/dotcommander/reliquary/index"
@@ -14,10 +13,9 @@ import (
 
 // Index is an in-memory index keyed by retrieval result ID.
 type Index struct {
-	mu        sync.RWMutex
-	items     map[string]*retrieval.Result
-	dimension int
-	identity  string
+	mu    sync.RWMutex
+	items map[string]*retrieval.Result
+	space indexutil.Space
 }
 
 // New returns an empty in-memory index.
@@ -31,8 +29,7 @@ func (i *Index) Reset(ctx context.Context) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.items = make(map[string]*retrieval.Result)
-	i.dimension = 0
-	i.identity = ""
+	i.space = indexutil.Space{}
 	return nil
 }
 
@@ -43,9 +40,6 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	dimension := i.dimension
-	identity := i.identity
-	identityEstablished := len(i.items) > 0
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -56,19 +50,10 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 		if item.ID == "" {
 			return fmt.Errorf("reliquary index: empty item ID")
 		}
-		if !identityEstablished {
-			identity = item.IndexIdentity
-			identityEstablished = true
-		} else if item.IndexIdentity != identity {
-			return fmt.Errorf("%w: index has %q, item %q has %q", indexcontract.ErrIdentityMismatch, identity, item.ID, item.IndexIdentity)
-		}
-		if len(item.Embedding) > 0 {
-			if dimension == 0 {
-				dimension = len(item.Embedding)
-			} else if len(item.Embedding) != dimension {
-				return fmt.Errorf("%w: index has %d dimensions, item %q has %d", indexcontract.ErrDimensionMismatch, dimension, item.ID, len(item.Embedding))
-			}
-		}
+	}
+	nextSpace, err := i.space.ValidateResults(items)
+	if err != nil {
+		return err
 	}
 	if i.items == nil {
 		i.items = make(map[string]*retrieval.Result)
@@ -78,8 +63,66 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 			i.items[item.ID] = indexutil.Clone(item)
 		}
 	}
-	i.dimension = dimension
-	i.identity = identity
+	i.space = nextSpace
+	return nil
+}
+
+// ReplaceDocuments atomically replaces complete document revisions. Empty
+// result sets delete their document.
+func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontract.DocumentReplacement) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := indexutil.ValidateReplacements(replacements); err != nil {
+		return err
+	}
+	seen := make(map[string]struct{}, len(replacements))
+	for _, replacement := range replacements {
+		seen[replacement.DocumentID] = struct{}{}
+	}
+
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	nextSpace := i.space
+	for _, replacement := range replacements {
+		var err error
+		nextSpace, err = nextSpace.ValidateResults(replacement.Results)
+		if err != nil {
+			return err
+		}
+	}
+	next := make(map[string]*retrieval.Result, len(i.items))
+	for id, item := range i.items {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remove := false
+		for documentID := range seen {
+			if item.DocumentID == documentID {
+				remove = true
+				break
+			}
+		}
+		if !remove {
+			next[id] = indexutil.Clone(item)
+		}
+	}
+	for _, replacement := range replacements {
+		for _, item := range replacement.Results {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if item != nil {
+				if retained := next[item.ID]; retained != nil {
+					return fmt.Errorf("%w: %q belongs to retained document %q", indexcontract.ErrResultIDConflict, item.ID, retained.DocumentID)
+				}
+				next[item.ID] = indexutil.Clone(item)
+			}
+		}
+	}
+
+	i.items = next
+	i.space = nextSpace
 	return nil
 }
 
@@ -88,20 +131,14 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := indexutil.ValidateDocumentID(documentID); err != nil {
+		return err
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	for id, item := range i.items {
-		if item.DocumentID == documentID || item.DocumentID == "" && strings.HasPrefix(id, documentID+"#") {
+		if item.DocumentID == documentID {
 			delete(i.items, id)
-		}
-	}
-	i.dimension = 0
-	i.identity = ""
-	for _, item := range i.items {
-		i.identity = item.IndexIdentity
-		if len(item.Embedding) > 0 {
-			i.dimension = len(item.Embedding)
-			break
 		}
 	}
 	return nil
@@ -112,6 +149,9 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if err := indexutil.ValidateFilter(query.Filter); err != nil {
+		return nil, fmt.Errorf("reliquary index: %w", err)
+	}
 	i.mu.RLock()
 	items := make([]*retrieval.Result, 0, len(i.items))
 	for _, item := range i.items {
@@ -121,15 +161,10 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 		}
 		items = append(items, indexutil.Clone(item))
 	}
-	dimension := i.dimension
-	identity := i.identity
-	identityEstablished := len(i.items) > 0
+	space := i.space
 	i.mu.RUnlock()
-	if identityEstablished && identity != query.Identity {
-		return nil, fmt.Errorf("%w: index has %q, query has %q", indexcontract.ErrIdentityMismatch, identity, query.Identity)
-	}
-	if dimension > 0 && len(query.Vector) > 0 && len(query.Vector) != dimension {
-		return nil, fmt.Errorf("%w: index has %d dimensions, query has %d", indexcontract.ErrDimensionMismatch, dimension, len(query.Vector))
+	if err := space.ValidateQuery(query); err != nil {
+		return nil, err
 	}
 	return indexutil.Search(ctx, query, items)
 }

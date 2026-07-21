@@ -39,7 +39,8 @@ func AverageSilhouetteScore(embeddings [][]float64, assignments []int) float64 {
 }
 
 // FindOptimalK sweeps k from MinK to min(MaxK, N-1) and returns the best k.
-// Tie-break: smaller k wins (simpler model).
+// Tie-break: smaller k wins (simpler model). HAC returns an empty result when
+// that interval contains no feasible k.
 func FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResult {
 	algorithm := cfg.Algorithm
 	if algorithm == "" {
@@ -81,7 +82,7 @@ func FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResul
 		maxK = n - 1
 	}
 	if maxK < minK {
-		maxK = minK
+		return &SilhouetteResult{}
 	}
 
 	bestK := 0

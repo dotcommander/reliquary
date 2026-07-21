@@ -140,6 +140,23 @@ func TestResolveChunkSpan_UnicodeByteOffsets(t *testing.T) {
 	}
 }
 
+func TestResolveChunkSpan_MalformedUTF8FallbackIsSliceSafe(t *testing.T) {
+	t.Parallel()
+	content := "prefix\n\xff"
+	chunk := Chunk{Text: "prefix \ufffd"}
+
+	span, ok := ResolveChunkSpan(content, chunk, 0)
+	if !ok {
+		t.Fatal("expected malformed UTF-8 content to resolve through normalized fallback")
+	}
+	if span.Start < 0 || span.End < span.Start || span.End > len(content) {
+		t.Fatalf("span = [%d, %d), want slice-safe range within content length %d", span.Start, span.End, len(content))
+	}
+	if got := content[span.Start:span.End]; got != content {
+		t.Fatalf("content[Start:End] = %q, want original bytes %q", got, content)
+	}
+}
+
 func TestLineRangeForSpan_EndAtNewlineUsesPreviousLine(t *testing.T) {
 	t.Parallel()
 	content := "line one\nline two\nline three\n"

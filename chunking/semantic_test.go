@@ -310,38 +310,38 @@ func TestSplitOversized(t *testing.T) {
 	}
 }
 
-func TestDotProduct(t *testing.T) {
+func TestSemanticScoringCosine(t *testing.T) {
 	t.Parallel()
 
 	a := []float32{1.0, 0.0, 0.0}
 	b := []float32{1.0, 0.0, 0.0}
-	if got := dotProduct(a, b); math.Abs(got-1.0) > 1e-6 {
-		t.Errorf("dot(a,a) = %v, want 1.0", got)
+	if got := cosineSimilarity(a, b); math.Abs(got-1.0) > 1e-6 {
+		t.Errorf("cosine(a,a) = %v, want 1.0", got)
 	}
 
 	c := []float32{0.0, 1.0, 0.0}
-	if got := dotProduct(a, c); math.Abs(got) > 1e-6 {
-		t.Errorf("dot(a,c) = %v, want 0.0", got)
+	if got := cosineSimilarity(a, c); math.Abs(got) > 1e-6 {
+		t.Errorf("cosine(a,c) = %v, want 0.0", got)
 	}
 }
 
-func TestDotProduct_LengthMismatch(t *testing.T) {
+func TestSemanticScoringCosineLengthMismatch(t *testing.T) {
 	t.Parallel()
 
 	a := []float32{1.0, 2.0, 3.0}
 	b := []float32{1.0, 2.0}
-	got := dotProduct(a, b)
+	got := cosineSimilarity(a, b)
 	if got != 0 {
-		t.Errorf("dotProduct with mismatched lengths = %v, want 0", got)
+		t.Errorf("cosineSimilarity with mismatched lengths = %v, want 0", got)
 	}
 }
 
-func TestDotProduct_EmptyVectors(t *testing.T) {
+func TestSemanticScoringCosineEmptyVectors(t *testing.T) {
 	t.Parallel()
 
-	got := dotProduct([]float32{}, []float32{})
+	got := cosineSimilarity([]float32{}, []float32{})
 	if got != 0 {
-		t.Errorf("dotProduct of empty vectors = %v, want 0", got)
+		t.Errorf("cosineSimilarity of empty vectors = %v, want 0", got)
 	}
 }
 
@@ -409,6 +409,31 @@ func TestNewSemanticChunker_NilEmbedder(t *testing.T) {
 	sc, err := NewSemanticChunker(nil, SemanticOpts{})
 	assert.Nil(t, sc)
 	assert.ErrorIs(t, err, ErrNilEmbedder)
+}
+
+func TestSemanticConstructors_TypedNilEmbedder(t *testing.T) {
+	t.Parallel()
+
+	var embedder *controlledEmbedder
+	constructors := []struct {
+		name string
+		new  func() (*SemanticChunker, error)
+	}{
+		{name: "NewSemanticChunker", new: func() (*SemanticChunker, error) {
+			return NewSemanticChunker(embedder, SemanticOpts{})
+		}},
+		{name: "NewSemantic", new: func() (*SemanticChunker, error) {
+			return NewSemantic(embedder)
+		}},
+	}
+	for _, tt := range constructors {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			chunker, err := tt.new()
+			assert.Nil(t, chunker)
+			assert.ErrorIs(t, err, ErrNilEmbedder)
+		})
+	}
 }
 
 func TestNewSemanticChunker_ValidEmbedder(t *testing.T) {
@@ -644,6 +669,36 @@ func TestPlanSemanticChunks_ParsesBreaksAndChunks(t *testing.T) {
 	assert.Equal(t, units, plan.Units)
 }
 
+func TestPlanSemanticChunksIsMagnitudeInvariantAndDoesNotMutateEmbeddings(t *testing.T) {
+	t.Parallel()
+
+	text := "Alpha topic first sentence is long enough.\n\nAlpha topic second sentence is long enough.\n\nBeta topic first sentence is long enough.\n\nBeta topic second sentence is long enough."
+	units := SemanticUnits(text)
+	base := [][]float32{{1, 0}, {2, 0}, {0, 3}, {0, 4}}
+	scaled := [][]float32{{10, 0}, {0.2, 0}, {0, 300}, {0, 0.04}}
+	baseBefore := cloneEmbeddings(base)
+	scaledBefore := cloneEmbeddings(scaled)
+	opts := SemanticPlanOptions{MinChunkChars: 1, MaxChunkChars: 500, BreakSensitivity: 1, FallbackSize: 500}
+
+	basePlan, baseOK := PlanSemanticChunks(text, units, base, opts)
+	scaledPlan, scaledOK := PlanSemanticChunks(text, units, scaled, opts)
+	require.True(t, baseOK)
+	require.True(t, scaledOK)
+	assert.Equal(t, basePlan.Breaks, scaledPlan.Breaks)
+	assert.Equal(t, chunkTexts(basePlan.Chunks), chunkTexts(scaledPlan.Chunks))
+	assert.InDeltaSlice(t, basePlan.Similarities, scaledPlan.Similarities, 1e-6)
+	assert.Equal(t, baseBefore, base, "semantic planning must not normalize caller embeddings in place")
+	assert.Equal(t, scaledBefore, scaled, "semantic planning must not normalize caller embeddings in place")
+}
+
+func cloneEmbeddings(embeddings [][]float32) [][]float32 {
+	cloned := make([][]float32, len(embeddings))
+	for i, embedding := range embeddings {
+		cloned[i] = append([]float32(nil), embedding...)
+	}
+	return cloned
+}
+
 func TestPlanSemanticChunks_SpanRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -722,6 +777,26 @@ func TestPlanSemanticChunks_RejectsZeroVector(t *testing.T) {
 
 	_, ok := PlanSemanticChunks(text, units, [][]float32{{1, 0}, {0, 0}, {0, 1}}, SemanticPlanOptions{})
 	assert.False(t, ok)
+}
+
+func TestPlanSemanticChunks_RejectsNonFiniteEmbeddings(t *testing.T) {
+	t.Parallel()
+
+	text := "Alpha. Beta. Gamma."
+	units := []SemanticUnit{{Text: "Alpha."}, {Text: "Beta."}, {Text: "Gamma."}}
+	for name, value := range map[string]float32{
+		"nan":               float32(math.NaN()),
+		"positive infinity": float32(math.Inf(1)),
+		"negative infinity": float32(math.Inf(-1)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			embeddings := [][]float32{{1, 0}, {value, 1}, {0, 1}}
+			if _, ok := PlanSemanticChunks(text, units, embeddings, SemanticPlanOptions{}); ok {
+				t.Fatal("PlanSemanticChunks accepted a non-finite embedding")
+			}
+		})
+	}
 }
 
 func TestPlanSemanticChunks_TooFewUnitsFalse(t *testing.T) {

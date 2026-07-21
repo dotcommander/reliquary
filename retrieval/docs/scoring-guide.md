@@ -27,6 +27,10 @@ here operates on vectors you already have.
 similarity, keyword overlap, and filename overlap — then runs min-max
 calibration across the whole result set before sorting. Because calibration is
 corpus-aware, the scores it produces are relative to *this batch*, not absolute.
+Each signal is calibrated only across results where that signal is present, so
+a missing embedding, content string, or filename does not distort another
+result's range. Reranking also clears previously computed component and combined
+scores before rescoring, which makes reusing `Result` values safe.
 
 ```go
 scorer := retrieval.NewScorer(retrieval.DefaultWeights())
@@ -79,6 +83,10 @@ score := scorer.Score(queryEmbedding, "query", result)
 overlap := retrieval.FilenameOverlap("ml-guide.md", "machine learning")
 w := retrieval.AdaptiveWeights(3) // 3 tokens → DefaultWeights
 ```
+
+`RecencyFromAge(age, halfLife)` produces a finite score in `[0, 1]`. It treats
+non-positive ages or half-lives as fully fresh and fails closed to `0` for NaN
+or indeterminate infinite inputs.
 
 ## Explaining score contributions
 
@@ -269,6 +277,13 @@ fmt.Println(best.Text, best.Similarity)
 | `Embedding` | caller-supplied embedding |
 | `Similarity` | cosine similarity to query; 0 means not yet computed |
 
+For the document-to-result path, `ResultsFromDocuments` rejects blank document
+IDs and duplicate IDs in one batch before chunking. `EmbedResults` rejects nil
+results before calling the embedder, validates that a successful embedding batch
+has one finite, positive-dimension vector per result, and does not mutate any
+result when validation fails. `AttachEmbeddings` remains the lower-level helper:
+it requires matching slice lengths but skips nil destinations.
+
 ---
 
 ## Filtering paths
@@ -380,6 +395,11 @@ denominators.
 `Relevant` values act as graded relevance: any value > 0 is relevant, and the
 numeric value drives NDCG gain via `2^rel − 1`. MRR and NDCG return 0 when
 `Relevant` is empty; `UniqueTopicAtK` is always computed.
+
+Metric functions count only the first occurrence of each stable result ID.
+`ValidateRun` is stricter: it rejects blank or duplicate IDs in the final result
+list and in every captured stage. `EvaluateRun` also requires exactly one run
+query for every fixture query and rejects unknown query IDs.
 
 For golden-query regression checks, define a `Fixture` with judged documents and
 evaluate a captured `Run`. The harness uses the same `Evaluate`,

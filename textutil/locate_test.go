@@ -100,4 +100,16 @@ func TestFragmentRange(t *testing.T) {
 		require.True(t, found)
 		assert.True(t, utf8.ValidString(content[start:end]))
 	})
+
+	t.Run("malformed_utf8_normalized_fallback_is_slice_safe", func(t *testing.T) {
+		t.Parallel()
+		content := "prefix\n\xff"
+		fragment := "prefix \ufffd"
+		start, end, found := FragmentRange(content, fragment, 0, NormalizedEarly)
+		require.True(t, found)
+		assert.GreaterOrEqual(t, start, 0)
+		assert.GreaterOrEqual(t, end, start)
+		assert.LessOrEqual(t, end, len(content))
+		assert.Equal(t, content, content[start:end])
+	})
 }

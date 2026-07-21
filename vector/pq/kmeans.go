@@ -2,6 +2,7 @@ package pq
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 )
@@ -16,8 +17,8 @@ import (
 //   - Compute D(x)^2 = distance to nearest existing centroid
 //   - Choose next centroid with probability proportional to D(x)^2
 func KMeansPlusPlus(vectors [][]float32, k int) ([][]float32, error) {
-	if len(vectors) == 0 {
-		return nil, errors.New("no vectors provided")
+	if _, err := validateKMeansVectors(vectors); err != nil {
+		return nil, err
 	}
 	if k <= 0 {
 		return nil, errors.New("k must be positive")
@@ -26,7 +27,6 @@ func KMeansPlusPlus(vectors [][]float32, k int) ([][]float32, error) {
 		return nil, errors.New("k cannot exceed number of vectors")
 	}
 
-	_ = len(vectors[0]) // Validate dimension exists
 	centroids := make([][]float32, k)
 
 	// Choose first centroid uniformly at random
@@ -80,8 +80,9 @@ func KMeansPlusPlus(vectors [][]float32, k int) ([][]float32, error) {
 // Returns the k centroids. Empty clusters are handled by reinitializing
 // from the farthest point.
 func KMeans(vectors [][]float32, k int, maxIter int) ([][]float32, error) {
-	if len(vectors) == 0 {
-		return nil, errors.New("no vectors provided")
+	dim, err := validateKMeansVectors(vectors)
+	if err != nil {
+		return nil, err
 	}
 	if k <= 0 {
 		return nil, errors.New("k must be positive")
@@ -98,8 +99,6 @@ func KMeans(vectors [][]float32, k int, maxIter int) ([][]float32, error) {
 	if maxIter <= 0 {
 		return nil, errors.New("maxIter must be positive")
 	}
-
-	dim := len(vectors[0])
 
 	// Initialize with k-means++
 	centroids, err := KMeansPlusPlus(vectors, k)
@@ -215,8 +214,9 @@ func copyVector(v []float32) []float32 {
 //   - batchSize: number of samples per iteration
 //   - maxIter: maximum iterations
 func MiniBatchKMeans(vectors [][]float32, k int, batchSize int, maxIter int) ([][]float32, error) {
-	if len(vectors) == 0 {
-		return nil, errors.New("no vectors provided")
+	dim, err := validateKMeansVectors(vectors)
+	if err != nil {
+		return nil, err
 	}
 	if k <= 0 {
 		return nil, errors.New("k must be positive")
@@ -227,8 +227,6 @@ func MiniBatchKMeans(vectors [][]float32, k int, batchSize int, maxIter int) ([]
 	if batchSize > len(vectors) {
 		batchSize = len(vectors)
 	}
-
-	dim := len(vectors[0])
 
 	// Initialize with k-means++
 	centroids, err := KMeansPlusPlus(vectors, k)
@@ -258,6 +256,27 @@ func MiniBatchKMeans(vectors [][]float32, k int, batchSize int, maxIter int) ([]
 	}
 
 	return centroids, nil
+}
+
+func validateKMeansVectors(vectors [][]float32) (int, error) {
+	if len(vectors) == 0 {
+		return 0, errors.New("no vectors provided")
+	}
+	dim := len(vectors[0])
+	if dim == 0 {
+		return 0, errors.New("vectors must have positive dimension")
+	}
+	for i, vector := range vectors {
+		if len(vector) != dim {
+			return 0, fmt.Errorf("vector %d has dimension %d, expected %d", i, len(vector), dim)
+		}
+		for j, value := range vector {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return 0, fmt.Errorf("vector %d has non-finite value at index %d: %v", i, j, value)
+			}
+		}
+	}
+	return dim, nil
 }
 
 // sampleBatch randomly samples vectors without replacement.

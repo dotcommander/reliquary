@@ -30,6 +30,9 @@ func KMeans64(points [][]float64, cfg KMeans64Config) *KMeans64Result {
 	if n == 0 {
 		return &KMeans64Result{K: 0}
 	}
+	if !validKMeans64Points(points) {
+		return &KMeans64Result{K: 0}
+	}
 
 	k := cfg.K
 	if k <= 0 {
@@ -58,6 +61,9 @@ func KMeans64(points [][]float64, cfg KMeans64Config) *KMeans64Result {
 
 	centroids := kmeans64PlusPlusInit(points, k, rng)
 	assignments := make([]int, n)
+	for i := range assignments {
+		assignments[i] = -1
+	}
 
 	var iterations int
 	var converged bool
@@ -102,6 +108,27 @@ func KMeans64(points [][]float64, cfg KMeans64Config) *KMeans64Result {
 		Iterations:  iterations,
 		Converged:   converged,
 	}
+}
+
+func validKMeans64Points(points [][]float64) bool {
+	if len(points) == 0 {
+		return false
+	}
+	dim := len(points[0])
+	if dim == 0 {
+		return false
+	}
+	for _, point := range points {
+		if len(point) != dim {
+			return false
+		}
+		for _, value := range point {
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func kmeans64PlusPlusInit(points [][]float64, k int, rng *rand.Rand) [][]float64 {
@@ -278,8 +305,8 @@ func AverageSilhouetteScore64(points [][]float64, assignments []int) float64 {
 // FindOptimalK64 runs K-means for each candidate k and returns the best result.
 func FindOptimalK64(points [][]float64, minK, maxK int) (bestK int, bestScore float64, assignments []int, centroids [][]float64, scores []float64, kValues []int) {
 	n := len(points)
-	if n <= 2 {
-		return 1, 0, make([]int, n), nil, []float64{0}, []int{1}
+	if !validKMeans64Points(points) {
+		return 0, 0, nil, nil, nil, nil
 	}
 	if minK < 2 {
 		minK = 2
@@ -287,11 +314,17 @@ func FindOptimalK64(points [][]float64, minK, maxK int) (bestK int, bestScore fl
 	if maxK <= 0 {
 		maxK = 20
 	}
+	if maxK < minK {
+		return 0, 0, nil, nil, nil, nil
+	}
+	if n <= 2 {
+		return 1, 0, make([]int, n), nil, []float64{0}, []int{1}
+	}
 	if maxK > n-1 {
 		maxK = n - 1
 	}
 	if maxK < minK {
-		maxK = minK
+		return 0, 0, nil, nil, nil, nil
 	}
 
 	bestScore = -2

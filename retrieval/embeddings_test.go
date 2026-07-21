@@ -3,6 +3,8 @@ package retrieval
 import (
 	"context"
 	"errors"
+	"math"
+	"reflect"
 	"testing"
 
 	"github.com/dotcommander/reliquary/embedding"
@@ -62,6 +64,73 @@ func TestEmbedResults(t *testing.T) {
 	}
 	if err := EmbedResults(context.Background(), stub, nil); err != nil {
 		t.Fatalf("EmbedResults(nil) error = %v", err)
+	}
+}
+
+func TestEmbedResultsRejectsNilBeforeEmbedding(t *testing.T) {
+	t.Parallel()
+
+	called := false
+	stub := embedFunc(func(context.Context, embeddings.Request) (embeddings.Result, error) {
+		called = true
+		return embeddings.Result{}, nil
+	})
+	results := []*Result{{ID: "a", Content: "alpha", Embedding: []float64{9}}, nil}
+	if err := EmbedResults(context.Background(), stub, results); !errors.Is(err, ErrNilResult) {
+		t.Fatalf("EmbedResults() error = %v, want ErrNilResult", err)
+	}
+	if called {
+		t.Fatal("EmbedResults called the embedder for a nil result")
+	}
+	if !reflect.DeepEqual(results[0].Embedding, []float64{9}) {
+		t.Fatalf("existing embedding mutated: %v", results[0].Embedding)
+	}
+}
+
+func TestEmbedResultsRejectsMalformedBatchBeforeMutation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		result         embeddings.Result
+		wantCountError bool
+	}{
+		{
+			name:           "count mismatch",
+			result:         embeddings.Result{Vectors: []embeddings.Vector{{1, 0}}},
+			wantCountError: true,
+		},
+		{
+			name:   "ragged vectors",
+			result: embeddings.Result{Vectors: []embeddings.Vector{{1, 0}, {1}}},
+		},
+		{
+			name:   "non-finite vector",
+			result: embeddings.Result{Vectors: []embeddings.Vector{{1, 0}, {float32(math.NaN()), 1}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			results := []*Result{
+				{ID: "a", Content: "alpha", Embedding: []float64{9, 8}},
+				{ID: "b", Content: "beta", Embedding: []float64{7, 6}},
+			}
+			before := [][]float64{append([]float64(nil), results[0].Embedding...), append([]float64(nil), results[1].Embedding...)}
+			stub := embedFunc(func(context.Context, embeddings.Request) (embeddings.Result, error) {
+				return tt.result, nil
+			})
+			err := EmbedResults(context.Background(), stub, results)
+			if !errors.Is(err, embeddings.ErrInvalidResult) {
+				t.Fatalf("EmbedResults() error = %v, want ErrInvalidResult", err)
+			}
+			if errors.Is(err, ErrEmbeddingCountMismatch) != tt.wantCountError {
+				t.Fatalf("errors.Is(ErrEmbeddingCountMismatch) = %v, want %v: %v", errors.Is(err, ErrEmbeddingCountMismatch), tt.wantCountError, err)
+			}
+			if !reflect.DeepEqual([][]float64{results[0].Embedding, results[1].Embedding}, before) {
+				t.Fatalf("results mutated after invalid batch: %#v", results)
+			}
+		})
 	}
 }
 

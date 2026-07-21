@@ -85,6 +85,10 @@
 //	q2 := &pq.Quantizer{}
 //	q2.Load(&buf)
 //
+// Loads are strict and atomic: malformed or truncated state leaves q2
+// unchanged. Serialized codebooks larger than 256 MiB or with more than 65,536
+// subspaces are rejected before allocation.
+//
 // # Configuration Guidelines
 //
 // For 1536-dimensional vectors (OpenAI text-embedding-3-small):

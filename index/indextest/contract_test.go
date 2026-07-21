@@ -24,13 +24,21 @@ func TestCancelAfterContextHelpers(t *testing.T) {
 	if ctx.Err() != nil {
 		t.Fatal("expected nil error on first check")
 	}
-	<-ctx.Done()
-	if ctx.Err() != context.Canceled {
-		t.Fatalf("expected context.Canceled, got %v", ctx.Err())
+	select {
+	case <-ctx.Done():
+		t.Fatal("Done closed before the configured number of checks")
+	default:
 	}
-	// Check again after canceled flag is true
-	if ctx.Err() != context.Canceled {
-		t.Fatalf("expected context.Canceled on repeat check, got %v", ctx.Err())
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("expected context.Canceled on second check, got %v", err)
+	}
+	select {
+	case <-ctx.Done():
+	default:
+		t.Fatal("Done remained open after cancellation")
+	}
+	if err := ctx.Err(); err != context.Canceled {
+		t.Fatalf("expected context.Canceled on repeat check, got %v", err)
 	}
 
 	if ids := resultIDs(nil); ids != "" {

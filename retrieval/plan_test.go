@@ -46,3 +46,21 @@ func TestEvaluatePlanReportsSourceAndLayerMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestEvaluateSourceCanonicalizesReportedResults(t *testing.T) {
+	t.Parallel()
+
+	query := EvalQuery{ID: "q", Relevant: map[string]float64{"a": 1, "b": 1}}
+	report := EvaluateSource(query, SourceReport{Results: []RankedResult{
+		{ID: "a", Score: 3},
+		{ID: "a", Score: 2},
+		{ID: "b", Score: 1},
+	}}, 2)
+	if report.CandidateCount != 2 || report.HitCount != 2 || len(report.Results) != 2 {
+		t.Fatalf("source report = %+v, want two canonical candidates and hits", report)
+	}
+	if report.Results[0].ID != "a" || report.Results[0].Score != 3 || report.Results[1].ID != "b" {
+		t.Fatalf("reported results = %+v, want first a occurrence followed by b", report.Results)
+	}
+	approxEqual(t, "CandidateRecall", report.CandidateRecall, 1)
+}

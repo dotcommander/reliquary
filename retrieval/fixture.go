@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 )
 
 // Fixture is a caller-owned golden query set for deterministic retrieval
@@ -181,8 +182,9 @@ func EvalQueryFromFixture(fq FixtureQuery) EvalQuery {
 }
 
 // EvaluateRun evaluates captured retrieval results against a validated fixture.
-// Query reports are sorted lexically by query ID, independent of fixture or run
-// input order.
+// The run must contain every fixture query and no unknown query IDs. Query
+// reports are sorted lexically by query ID, independent of fixture or run input
+// order.
 func EvaluateRun(f Fixture, r Run, k int) (Report, error) {
 	if err := ValidateFixture(f); err != nil {
 		return Report{}, err
@@ -207,6 +209,24 @@ func EvaluateRun(f Fixture, r Run, k int) (Report, error) {
 			return 0
 		}
 	})
+	runQueryIDs := make(map[string]struct{}, len(runQueries))
+	for _, query := range runQueries {
+		if _, exists := fixtureQueries[query.ID]; !exists {
+			return Report{}, fmt.Errorf("run query %q: fixture query not found", query.ID)
+		}
+		runQueryIDs[query.ID] = struct{}{}
+	}
+
+	missingQueryIDs := make([]string, 0, len(fixtureQueries)-len(runQueryIDs))
+	for queryID := range fixtureQueries {
+		if _, exists := runQueryIDs[queryID]; !exists {
+			missingQueryIDs = append(missingQueryIDs, queryID)
+		}
+	}
+	if len(missingQueryIDs) > 0 {
+		slices.Sort(missingQueryIDs)
+		return Report{}, fmt.Errorf("run is missing fixture queries: %s", strings.Join(missingQueryIDs, ", "))
+	}
 
 	report := Report{
 		FixtureID: f.ID,
@@ -215,10 +235,7 @@ func EvaluateRun(f Fixture, r Run, k int) (Report, error) {
 		Queries:   make([]ReportQuery, 0, len(runQueries)),
 	}
 	for _, runQuery := range runQueries {
-		fixtureQuery, exists := fixtureQueries[runQuery.ID]
-		if !exists {
-			return Report{}, fmt.Errorf("run query %q: fixture query not found", runQuery.ID)
-		}
+		fixtureQuery := fixtureQueries[runQuery.ID]
 		evalQuery := fixtureQuery.EvalQuery()
 		metrics := Evaluate(evalQuery, runQuery.Results, k)
 		report.Queries = append(report.Queries, ReportQuery{
@@ -280,7 +297,15 @@ func emptyStages(stages StageResults) bool {
 }
 
 func validateRankedResults(results []RankedResult, label string) error {
+	ids := make(map[string]struct{}, len(results))
 	for i, result := range results {
+		if strings.TrimSpace(result.ID) == "" {
+			return fmt.Errorf("%s result at index %d: ID is required", label, i)
+		}
+		if _, exists := ids[result.ID]; exists {
+			return fmt.Errorf("%s result at index %d: duplicate ID %q", label, i, result.ID)
+		}
+		ids[result.ID] = struct{}{}
 		if math.IsNaN(result.Score) || math.IsInf(result.Score, 0) {
 			return fmt.Errorf("%s result at index %d: score must be finite", label, i)
 		}

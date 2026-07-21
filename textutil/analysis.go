@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 type KeywordOptions struct {
@@ -118,7 +119,7 @@ func ExtractKeywords(texts []string, options KeywordOptions) []string {
 	for _, text := range texts {
 		for _, raw := range strings.Fields(strings.ToLower(text)) {
 			token := NormalizeKeywordToken(raw)
-			if token == "" || len(token) < minLength || isStopWord(token, options.StopWords) {
+			if token == "" || utf8.RuneCountInString(token) < minLength || isStopWord(token, options.StopWords) {
 				continue
 			}
 			if options.Include != nil && !options.Include(token) {

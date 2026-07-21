@@ -32,6 +32,8 @@ type ClusterService interface {
 }
 ```
 
+Empty input succeeds with an empty result. Non-empty embeddings must have a positive, consistent dimension and contain only finite values; otherwise `Cluster` returns a contextual error before running the selected algorithm.
+
 ### `type ClusterOptions struct`
 
 ```go
@@ -287,7 +289,7 @@ Mean silhouette coefficient across all points. Returns `0` for empty input.
 
 ### `FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResult`
 
-Sweeps `k` from `cfg.MinK` to `min(cfg.MaxK, n-1)` and returns the best k by silhouette score. Tie-break: smaller k wins (simpler model). Returns `BestK=1` with a zero score when `n ≤ 2`.
+Sweeps `k` from `cfg.MinK` to `min(cfg.MaxK, n-1)` and returns the best k by silhouette score. Tie-break: smaller k wins (simpler model). Returns `BestK=1` with a zero score when `n ≤ 2`. For HAC with more than two inputs, a range containing no feasible k returns an empty `SilhouetteResult`.
 
 ### `ClusterSilhouetteScores(embeddings [][]float64, assignments []int) map[int]float64`
 

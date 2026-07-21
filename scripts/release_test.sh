@@ -31,6 +31,11 @@ EOF
 if [ "${RELEASE_TEST_TIDY_CHANGE:-}" = 1 ] && [ "$1 $2" = "mod tidy" ]; then
 	printf '\n// release-test tidy change\n' >> go.mod
 fi
+case "$1 $2" in
+	"list -m"|"list -f"|"list -deps")
+		echo github.com/dotcommander/reliquary
+		;;
+esac
 exit 0
 EOF
 	chmod +x "$repo/bin/go"

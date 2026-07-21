@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -209,5 +210,85 @@ func TestNewBinaryIndexCheckedReportsSkippedRows(t *testing.T) {
 		report.SkippedMissingMetadata != 1 ||
 		report.DimensionMismatch != 1 {
 		t.Fatalf("report = %+v, want input=4 indexed=1 bad_blob=1 missing_metadata=1 dimension_mismatch=1", report)
+	}
+}
+
+func TestNewBinaryIndexCheckedRejectsNonFiniteAndKeepsFirstValidKey(t *testing.T) {
+	t.Parallel()
+
+	blobs := [][]byte{
+		EncodeFloat32Vec([]float32{float32(math.NaN()), 0}),
+		EncodeFloat32Vec([]float32{float32(math.Inf(1)), 0}),
+		EncodeFloat32Vec([]float32{float32(math.Inf(-1)), 0}),
+		EncodeFloat32Vec([]float32{1, 0}),
+		EncodeFloat32Vec([]float32{0, 1}),
+	}
+	groups := []string{"shared", "pos-inf", "neg-inf", "shared", "shared"}
+	indices := []int{0, 0, 0, 0, 0}
+
+	idx, report := NewBinaryIndexChecked(blobs, groups, indices, 2)
+	if got := idx.Len(); got != 1 {
+		t.Fatalf("Len() = %d, want 1", got)
+	}
+	if report.InputRows != 5 || report.IndexedRows != 1 || report.SkippedBadBlob != 3 || report.SkippedDuplicateKey != 1 {
+		t.Fatalf("report = %+v, want input=5 indexed=1 bad_blob=3 duplicate_key=1", report)
+	}
+
+	candidates, ok := idx.SearchCandidatesLimit([]float32{1, 0}, 1)
+	if !ok || len(candidates) != 1 {
+		t.Fatalf("SearchCandidatesLimit() = (%v, %v), want one candidate", candidates, ok)
+	}
+	if candidates[0].Group != "shared" || candidates[0].ChunkIndex != 0 {
+		t.Fatalf("candidate = %+v, want shared/0", candidates[0])
+	}
+}
+
+func TestBinaryIndexRejectsNonFiniteQueries(t *testing.T) {
+	t.Parallel()
+
+	idx := NewBinaryIndex(
+		[][]byte{EncodeFloat32Vec([]float32{1, 0})},
+		[]string{"g"},
+		[]int{0},
+		2,
+	)
+	queries := [][]float32{
+		{float32(math.NaN()), 0},
+		{float32(math.Inf(1)), 0},
+		{float32(math.Inf(-1)), 0},
+	}
+	for _, query := range queries {
+		if candidates, ok := idx.SearchCandidates(query); ok || candidates != nil {
+			t.Fatalf("SearchCandidates(%v) = (%v, %v), want (nil, false)", query, candidates, ok)
+		}
+	}
+}
+
+func TestBinaryIndexDuplicateKeysCannotCrowdOutUniqueCandidates(t *testing.T) {
+	t.Parallel()
+
+	const duplicateRows = binaryPreFilterK + 1
+	blobs := make([][]byte, 0, duplicateRows+1)
+	groups := make([]string, 0, duplicateRows+1)
+	indices := make([]int, 0, duplicateRows+1)
+	for range duplicateRows {
+		blobs = append(blobs, EncodeFloat32Vec([]float32{1, 1}))
+		groups = append(groups, "duplicate")
+		indices = append(indices, 0)
+	}
+	blobs = append(blobs, EncodeFloat32Vec([]float32{0, 0}))
+	groups = append(groups, "unique")
+	indices = append(indices, 1)
+
+	idx, report := NewBinaryIndexChecked(blobs, groups, indices, 2)
+	if report.IndexedRows != 2 || report.SkippedDuplicateKey != duplicateRows-1 {
+		t.Fatalf("report = %+v, want indexed=2 duplicate_key=%d", report, duplicateRows-1)
+	}
+	candidates, ok := idx.SearchCandidates([]float32{1, 1})
+	if !ok || len(candidates) != 2 {
+		t.Fatalf("SearchCandidates() = (%v, %v), want two unique candidates", candidates, ok)
+	}
+	if candidates[0].Group == candidates[1].Group && candidates[0].ChunkIndex == candidates[1].ChunkIndex {
+		t.Fatalf("candidates contain duplicate exact-rerank keys: %v", candidates)
 	}
 }

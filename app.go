@@ -17,6 +17,7 @@ import (
 	"github.com/dotcommander/reliquary/embedding"
 	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/index/inmem"
+	"github.com/dotcommander/reliquary/internal/validate"
 	"github.com/dotcommander/reliquary/retrieval"
 )
 
@@ -36,6 +37,15 @@ var ErrResetUnsupported = errors.New("reliquary: index does not support reset")
 
 // ErrIdentityMismatch reports incompatible index identities.
 var ErrIdentityMismatch = indexcontract.ErrIdentityMismatch
+
+// ErrInvalidDocumentID reports a blank document identifier passed to Ingest.
+var ErrInvalidDocumentID = indexcontract.ErrInvalidDocumentID
+
+// ErrDuplicateDocumentID reports duplicate document identifiers in one Ingest call.
+var ErrDuplicateDocumentID = indexcontract.ErrDuplicateDocumentID
+
+// ErrResultIDConflict reports an invalid replacement result-ID collision.
+var ErrResultIDConflict = indexcontract.ErrResultIDConflict
 
 // App is a wired retrieval pipeline. Construct it with New, Quickstart, or
 // InMemory.
@@ -70,13 +80,13 @@ func New(opts ...Option) (*App, error) {
 			opt(a)
 		}
 	}
-	if a.embedder == nil {
+	if validate.IsNil(a.embedder) {
 		return nil, ErrNoEmbedder
 	}
 	if !a.indexIdentitySet || strings.TrimSpace(a.indexIdentity) == "" {
 		return nil, ErrInvalidIndexIdentity
 	}
-	if a.index == nil {
+	if validate.IsNil(a.index) {
 		a.index = inmem.New()
 	}
 	return a, nil
@@ -89,10 +99,10 @@ func (a *App) ensureReady() error {
 	if a == nil {
 		return ErrNilApp
 	}
-	if a.embedder == nil {
+	if validate.IsNil(a.embedder) {
 		return ErrNoEmbedder
 	}
-	if a.index == nil {
+	if validate.IsNil(a.index) {
 		a.index = inmem.New()
 	}
 	return nil
@@ -109,8 +119,11 @@ type Index = indexcontract.Index
 // IndexQuery describes candidate retrieval.
 type IndexQuery = indexcontract.IndexQuery
 
+// DocumentReplacement describes one complete document revision for an Index.
+type DocumentReplacement = indexcontract.DocumentReplacement
+
 // WithIndex sets the index used for ingestion and candidate retrieval. A nil
-// Index is unset and falls back to the default in-memory index.
+// or typed-nil Index is unset and falls back to the default in-memory index.
 func WithIndex(index Index) Option {
 	return func(a *App) {
 		a.index = index

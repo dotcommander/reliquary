@@ -40,6 +40,10 @@ func usesDefaultTextWeights(weights Weights) bool {
 func computeAndStoreRawSignals(queryEmbedding []float64, queryText string, result *Result, channels *scoreChannels) (ScoreSignals, SignalPresence) {
 	var raw ScoreSignals
 	var present SignalPresence
+	result.EmbeddingScore = 0
+	result.KeywordScore = 0
+	result.FilenameScore = 0
+	result.CombinedScore = 0
 	hasText := queryText != ""
 	hasEmbedding := len(queryEmbedding) > 0
 
@@ -76,7 +80,7 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryText string, resul
 	return raw, present
 }
 
-func calibrateScores(results []*Result, channels scoreChannels) {
+func calibrateScores(results []*Result, channels scoreChannels, presenceByResult map[*Result]SignalPresence) {
 	if len(results) < 2 {
 		return
 	}
@@ -86,28 +90,30 @@ func calibrateScores(results []*Result, channels scoreChannels) {
 	var minFn, maxFn float64 = math.MaxFloat64, -math.MaxFloat64
 
 	for _, result := range results {
-		if channels.embedding {
+		presence := presenceByResult[result]
+		if channels.embedding && presence.Embedding {
 			minEmb = min(minEmb, result.EmbeddingScore)
 			maxEmb = max(maxEmb, result.EmbeddingScore)
 		}
-		if channels.keyword {
+		if channels.keyword && presence.Keyword {
 			minKwd = min(minKwd, result.KeywordScore)
 			maxKwd = max(maxKwd, result.KeywordScore)
 		}
-		if channels.filename {
+		if channels.filename && presence.Filename {
 			minFn = min(minFn, result.FilenameScore)
 			maxFn = max(maxFn, result.FilenameScore)
 		}
 	}
 
 	for _, result := range results {
-		if channels.embedding {
+		presence := presenceByResult[result]
+		if channels.embedding && presence.Embedding {
 			result.EmbeddingScore = normalizeValue(result.EmbeddingScore, minEmb, maxEmb)
 		}
-		if channels.keyword {
+		if channels.keyword && presence.Keyword {
 			result.KeywordScore = normalizeValue(result.KeywordScore, minKwd, maxKwd)
 		}
-		if channels.filename {
+		if channels.filename && presence.Filename {
 			result.FilenameScore = normalizeValue(result.FilenameScore, minFn, maxFn)
 		}
 	}

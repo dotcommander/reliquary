@@ -60,6 +60,36 @@ func TestNormalizeTo64_ZeroPassthrough(t *testing.T) {
 	}
 }
 
+func TestNormalizeTo32_ExtremeFinite(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []float32{math.MaxFloat32, math.SmallestNonzeroFloat32} {
+		in := []float32{value, value}
+		got := NormalizeTo32(in)
+		if norm := math.Hypot(float64(got[0]), float64(got[1])); !approxEq64(norm, 1, 1e-6) {
+			t.Errorf("NormalizeTo32(%v): got %v with norm %v, want unit vector", value, got, norm)
+		}
+		if in[0] != value || in[1] != value {
+			t.Errorf("NormalizeTo32(%v): mutated input to %v", value, in)
+		}
+	}
+}
+
+func TestNormalizeTo64_ExtremeFinite(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []float64{math.MaxFloat64, math.SmallestNonzeroFloat64} {
+		in := []float64{value, value}
+		got := NormalizeTo64(in)
+		if norm := math.Hypot(got[0], got[1]); !approxEq64(norm, 1, 1e-15) {
+			t.Errorf("NormalizeTo64(%v): got %v with norm %v, want unit vector", value, got, norm)
+		}
+		if in[0] != value || in[1] != value {
+			t.Errorf("NormalizeTo64(%v): mutated input to %v", value, in)
+		}
+	}
+}
+
 func TestNormSquared32(t *testing.T) {
 	t.Parallel()
 

@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,12 @@ import (
 	"github.com/dotcommander/reliquary/document"
 	"github.com/dotcommander/reliquary/vector"
 )
+
+// ErrInvalidDocumentID reports a blank document identifier.
+var ErrInvalidDocumentID = errors.New("retrieval: document ID must not be blank")
+
+// ErrDuplicateDocumentID reports duplicate identifiers in one document batch.
+var ErrDuplicateDocumentID = errors.New("retrieval: duplicate document ID")
 
 type ChunkResult struct {
 	Text       string
@@ -40,6 +47,16 @@ func TextChunks(content string, size int, overlap int) []string {
 // documentID#chunkID identifiers. It is the small adapter most callers otherwise
 // hand-write before embedding and reranking.
 func ResultsFromDocuments(docs []document.Document, strategy chunking.Strategy, size, overlap int) ([]*Result, error) {
+	seen := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		if strings.TrimSpace(doc.ID) == "" {
+			return nil, ErrInvalidDocumentID
+		}
+		if _, exists := seen[doc.ID]; exists {
+			return nil, fmt.Errorf("%w: %q", ErrDuplicateDocumentID, doc.ID)
+		}
+		seen[doc.ID] = struct{}{}
+	}
 	chunker, err := chunking.NewChunker(strategy)
 	if err != nil {
 		return nil, err

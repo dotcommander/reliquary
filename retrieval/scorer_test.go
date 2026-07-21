@@ -100,6 +100,64 @@ func TestScorerRerankLeavesAbsentSignalsAtZero(t *testing.T) {
 	}
 }
 
+func TestScorerRerankCalibratesOnlyPresentSignals(t *testing.T) {
+	t.Parallel()
+
+	scorer := NewScorerWithOptions(Weights{Embedding: 1}, false)
+	results := []*Result{
+		{ID: "opposite", Embedding: []float64{-1, 0}},
+		{ID: "negative", Embedding: []float64{-1, 1}},
+		{ID: "absent"},
+	}
+
+	ranked, traces := scorer.RerankWithTrace([]float64{1, 0}, "", results)
+	byID := make(map[string]*Result, len(ranked))
+	traceByID := make(map[string]ScoreTrace, len(traces))
+	for i, result := range ranked {
+		byID[result.ID] = result
+		traceByID[traces[i].ID] = traces[i]
+	}
+
+	if got := byID["negative"].EmbeddingScore; got != 1 {
+		t.Fatalf("present negative signal calibrated score = %v, want 1", got)
+	}
+	if got := byID["absent"].EmbeddingScore; got != 0 {
+		t.Fatalf("absent embedding calibrated score = %v, want 0", got)
+	}
+	if traceByID["absent"].Present.Embedding {
+		t.Fatal("absent embedding reported as present")
+	}
+	if got := traceByID["absent"].Contributions.Embedding; got != 0 {
+		t.Fatalf("absent embedding contribution = %v, want 0", got)
+	}
+}
+
+func TestScorerClearsStaleComputedSignals(t *testing.T) {
+	t.Parallel()
+
+	scorer := NewScorerWithOptions(Weights{Embedding: 1, Keyword: 1, Filename: 1}, false)
+	result := &Result{
+		ID:             "reused",
+		Content:        "alpha",
+		Filename:       "alpha.md",
+		Embedding:      []float64{1, 0},
+		EmbeddingScore: 99,
+		KeywordScore:   99,
+		FilenameScore:  99,
+		CombinedScore:  99,
+	}
+
+	scorer.Score([]float64{1, 0}, "alpha", result)
+	result.Content = ""
+	result.Filename = ""
+	result.Embedding = nil
+	scorer.Rerank(nil, "", []*Result{result})
+
+	if result.EmbeddingScore != 0 || result.KeywordScore != 0 || result.FilenameScore != 0 || result.CombinedScore != 0 {
+		t.Fatalf("reused result retained stale scores: %+v", *result)
+	}
+}
+
 func TestScorerRerankHonorsCustomTextWeights(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +284,13 @@ func TestRecencyFromAge(t *testing.T) {
 		{"no halflife means no decay", 50, 0, 1.0},
 		{"one halflife is half", 100, 100, 0.5},
 		{"two halflives is quarter", 200, 100, 0.25},
+		{"nan age has zero freshness", math.NaN(), 100, 0},
+		{"nan age overrides disabled decay", math.NaN(), 0, 0},
+		{"nan halflife has zero freshness", 100, math.NaN(), 0},
+		{"nan halflife overrides fresh age", 0, math.NaN(), 0},
+		{"both nan have zero freshness", math.NaN(), math.NaN(), 0},
+		{"infinite ratio has zero freshness", math.Inf(1), math.Inf(1), 0},
+		{"infinite age has zero freshness", math.Inf(1), 100, 0},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -235,5 +300,28 @@ func TestRecencyFromAge(t *testing.T) {
 				t.Fatalf("RecencyFromAge(%v,%v) = %v, want %v", tc.age, tc.halfLife, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRecencyFromAgeAlwaysReturnsFiniteUnitRange(t *testing.T) {
+	t.Parallel()
+
+	for _, age := range []float64{math.Inf(-1), -1, 0, 1, math.MaxFloat64, math.Inf(1), math.NaN()} {
+		for _, halfLife := range []float64{math.Inf(-1), -1, 0, 1, math.MaxFloat64, math.Inf(1), math.NaN()} {
+			got := RecencyFromAge(age, halfLife)
+			if math.IsNaN(got) || math.IsInf(got, 0) || got < 0 || got > 1 {
+				t.Fatalf("RecencyFromAge(%v, %v) = %v, want finite value in [0,1]", age, halfLife, got)
+			}
+		}
+	}
+}
+
+func TestScorerDoesNotPropagateNaNRecency(t *testing.T) {
+	t.Parallel()
+
+	result := &Result{ID: "nan-recency", RecencyScore: RecencyFromAge(math.Inf(1), math.Inf(1))}
+	NewScorerWithOptions(Weights{Recency: 1}, false).Rerank(nil, "", []*Result{result})
+	if math.IsNaN(result.CombinedScore) || result.CombinedScore != 0 {
+		t.Fatalf("CombinedScore = %v, want 0", result.CombinedScore)
 	}
 }

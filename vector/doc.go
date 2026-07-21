@@ -15,8 +15,10 @@
 //
 // Normalize32/Normalize64 L2-normalize a vector in place and return the
 // original magnitude. NormalizeTo32/NormalizeTo64 return a new normalized
-// slice. NormSquared32/NormSquared64 and IsUnit32/IsUnit64 are low-level
-// helpers for callers that need to pre-check or validate unit vectors.
+// slice. These normalization helpers use scaled accumulation so extreme finite
+// magnitudes remain normalizable. NormSquared32/NormSquared64 and
+// IsUnit32/IsUnit64 are low-level helpers for callers that need to pre-check or
+// validate unit vectors.
 //
 // # Binary quantization
 //

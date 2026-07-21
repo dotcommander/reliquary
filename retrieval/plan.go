@@ -74,6 +74,7 @@ func EvaluatePlan(query EvalQuery, plan Plan, layers LayeredResults, sources []S
 
 // EvaluateSource fills metrics for one candidate source report.
 func EvaluateSource(query EvalQuery, report SourceReport, k int) SourceReport {
+	report.Results = canonicalRankedResults(report.Results)
 	report.CandidateCount = len(report.Results)
 	report.HitCount = hitCount(query.Relevant, report.Results)
 	if len(query.Relevant) > 0 {

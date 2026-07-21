@@ -79,6 +79,7 @@ func DecodeFloat32Batch(blobs [][]byte) ([][]float32, error) {
 // and a raw little-endian float32 BLOB without intermediate allocation.
 // Both vectors MUST be L2-normalized (as guaranteed by the embedder); under
 // that invariant, dot product == cosine similarity.
+// Callers must also ensure both operands contain only finite values.
 // Returns 0 if dimensions do not match.
 func DotFromBlob(query []float32, blob []byte) float32 {
 	if len(blob) != len(query)*4 {
@@ -92,6 +93,31 @@ func DotFromBlob(query []float32, blob []byte) float32 {
 	return dot
 }
 
+func finiteFloat32s(values []float32) bool {
+	for _, value := range values {
+		if !finiteFloat32Bits(math.Float32bits(value)) {
+			return false
+		}
+	}
+	return true
+}
+
+func finiteFloat32Blob(blob []byte) bool {
+	if len(blob)%4 != 0 {
+		return false
+	}
+	for offset := 0; offset < len(blob); offset += 4 {
+		if !finiteFloat32Bits(binary.LittleEndian.Uint32(blob[offset:])) {
+			return false
+		}
+	}
+	return true
+}
+
+func finiteFloat32Bits(bits uint32) bool {
+	return bits&0x7f800000 != 0x7f800000
+}
+
 // ScoredIndex identifies one scored input row.
 type ScoredIndex struct {
 	Index int
@@ -100,9 +126,10 @@ type ScoredIndex struct {
 
 // TopKFromBlob scores raw little-endian float32 blobs against query and returns
 // the top limit input indexes. Invalid or dimension-mismatched blobs are
-// skipped. Equal scores are ordered by ascending input index.
+// skipped, as are blobs whose score is non-finite. A non-finite query returns
+// no results. Equal scores are ordered by ascending input index.
 func TopKFromBlob(query []float32, blobs [][]byte, limit int, minScore float32) []ScoredIndex {
-	if len(query) == 0 || limit <= 0 || len(blobs) == 0 {
+	if len(query) == 0 || !finiteFloat32s(query) || limit <= 0 || len(blobs) == 0 {
 		return nil
 	}
 
@@ -113,6 +140,9 @@ func TopKFromBlob(query []float32, blobs [][]byte, limit int, minScore float32) 
 			continue
 		}
 		score := DotFromBlob(query, blob)
+		if !finiteFloat32Bits(math.Float32bits(score)) {
+			continue
+		}
 		if score < minScore {
 			continue
 		}

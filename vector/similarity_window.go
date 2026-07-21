@@ -116,15 +116,19 @@ func AdaptiveThreshold(similarities []float32) float32 {
 	}
 
 	// Calculate mean and standard deviation
-	var sum, sumSq float32
+	var sum, sumSq float64
 	for _, sim := range similarities {
-		sum += sim
-		sumSq += sim * sim
+		value := float64(sim)
+		sum += value
+		sumSq += value * value
 	}
 
-	mean := sum / float32(len(similarities))
-	variance := (sumSq / float32(len(similarities))) - (mean * mean)
-	stdDev := float32(math.Sqrt(float64(variance)))
+	mean := sum / float64(len(similarities))
+	variance := (sumSq / float64(len(similarities))) - (mean * mean)
+	if variance < 0 {
+		variance = 0
+	}
+	stdDev := math.Sqrt(variance)
 
 	// Adaptive threshold: mean - 1 standard deviation
 	// This identifies points that are significantly less similar than average
@@ -137,7 +141,7 @@ func AdaptiveThreshold(similarities []float32) float32 {
 		threshold = 0.9
 	}
 
-	return threshold
+	return float32(threshold)
 }
 
 // SmoothSimilarities applies smoothing to reduce noise in similarity scores.

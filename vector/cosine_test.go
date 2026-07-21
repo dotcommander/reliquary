@@ -91,6 +91,22 @@ func TestCosine64_ZeroVector(t *testing.T) {
 	}
 }
 
+func TestCosine64_ExtremeFiniteIdentical(t *testing.T) {
+	t.Parallel()
+
+	for _, v := range [][]float64{
+		{math.MaxFloat64, math.MaxFloat64},
+		{math.SmallestNonzeroFloat64, math.SmallestNonzeroFloat64},
+	} {
+		if got := Cosine64(v, v); got != 1 {
+			t.Errorf("Cosine64(%v, same): got %v, want 1", v, got)
+		}
+		if got := CosineDistance64(v, v); got != 0 {
+			t.Errorf("CosineDistance64(%v, same): got %v, want 0", v, got)
+		}
+	}
+}
+
 func TestNormalize32_UnitVector(t *testing.T) {
 	t.Parallel()
 	v := []float32{3, 4}
@@ -127,6 +143,49 @@ func TestNormalize32_AlreadyNormalized(t *testing.T) {
 	}
 	if !approxEq32(v[0], 1.0, 1e-6) {
 		t.Errorf("Normalize32 already normalized v[0]: got %f, want 1.0", v[0])
+	}
+}
+
+func TestNormalize32_ExtremeFinite(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []float32{math.MaxFloat32, math.SmallestNonzeroFloat32} {
+		v := []float32{value, value}
+		Normalize32(v)
+		if got := math.Hypot(float64(v[0]), float64(v[1])); !approxEq64(got, 1, 1e-6) {
+			t.Errorf("Normalize32(%v): got %v with norm %v, want unit vector", value, v, got)
+		}
+	}
+}
+
+func TestNormalize64_ExtremeFinite(t *testing.T) {
+	t.Parallel()
+
+	for _, value := range []float64{math.MaxFloat64, math.SmallestNonzeroFloat64} {
+		v := []float64{value, value}
+		Normalize64(v)
+		if got := math.Hypot(v[0], v[1]); !approxEq64(got, 1, 1e-15) {
+			t.Errorf("Normalize64(%v): got %v with norm %v, want unit vector", value, v, got)
+		}
+	}
+}
+
+func TestNormalizePreservesMixedNonFiniteBehavior(t *testing.T) {
+	t.Parallel()
+
+	for _, values := range [][]float64{
+		{math.NaN(), math.Inf(1)},
+		{math.Inf(1), math.NaN()},
+	} {
+		v64 := append([]float64(nil), values...)
+		if magnitude := Normalize64(v64); !math.IsNaN(magnitude) {
+			t.Errorf("Normalize64(%v) magnitude = %v, want NaN", values, magnitude)
+		}
+
+		v32 := []float32{float32(values[0]), float32(values[1])}
+		if magnitude := Normalize32(v32); !math.IsNaN(float64(magnitude)) {
+			t.Errorf("Normalize32(%v) magnitude = %v, want NaN", values, magnitude)
+		}
 	}
 }
 

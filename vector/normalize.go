@@ -4,20 +4,18 @@ import "math"
 
 // NormalizeTo32 returns a new L2-normalized copy of v without mutating the input.
 // If v has zero magnitude, the input slice is returned unchanged (identity
-// preserved) rather than a fresh zero slice.
+// preserved) rather than a fresh zero slice. Scaled accumulation avoids
+// overflow and underflow for finite inputs.
 func NormalizeTo32(v []float32) []float32 {
-	var norm float32
-	for _, x := range v {
-		norm += x * x
-	}
-	mag := float32(math.Sqrt(float64(norm)))
-	if mag == 0 {
+	scale, sumSquares := scaledSumSquares32(v)
+	if scale == 0 {
 		return v
 	}
+	rootSumSquares := math.Sqrt(sumSquares)
 
 	out := make([]float32, len(v))
 	for i := range v {
-		out[i] = v[i] / mag
+		out[i] = float32((float64(v[i]) / scale) / rootSumSquares)
 	}
 	return out
 }
@@ -25,18 +23,15 @@ func NormalizeTo32(v []float32) []float32 {
 // NormalizeTo64 is the float64 twin of NormalizeTo32. Zero-magnitude input is
 // returned unchanged.
 func NormalizeTo64(v []float64) []float64 {
-	var norm float64
-	for _, x := range v {
-		norm += x * x
-	}
-	mag := math.Sqrt(norm)
-	if mag == 0 {
+	scale, sumSquares := scaledSumSquares64(v)
+	if scale == 0 {
 		return v
 	}
+	rootSumSquares := math.Sqrt(sumSquares)
 
 	out := make([]float64, len(v))
 	for i := range v {
-		out[i] = v[i] / mag
+		out[i] = (v[i] / scale) / rootSumSquares
 	}
 	return out
 }

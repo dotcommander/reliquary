@@ -65,6 +65,47 @@ func TestKMeans64_DeterministicWithSeedZero(t *testing.T) {
 	}
 }
 
+func TestKMeans64SingleClusterRecomputesCentroid(t *testing.T) {
+	t.Parallel()
+
+	result := KMeans64([][]float64{{1, 0}, {3, 2}}, KMeans64Config{K: 1, Seed: 1})
+	if result.K != 1 || len(result.Centroids) != 1 {
+		t.Fatalf("KMeans64 result = %+v, want one cluster", result)
+	}
+	if got := result.Centroids[0]; len(got) != 2 || got[0] != 2 || got[1] != 1 {
+		t.Fatalf("centroid = %v, want [2 1]", got)
+	}
+	for i, assignment := range result.Assignments {
+		if assignment != 0 {
+			t.Fatalf("assignment[%d] = %d, want 0", i, assignment)
+		}
+	}
+}
+
+func TestKMeans64RejectsMalformedPoints(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		points [][]float64
+	}{
+		{name: "zero dimension", points: [][]float64{{}, {}}},
+		{name: "ragged", points: [][]float64{{1, 0}, {1}}},
+		{name: "NaN", points: [][]float64{{1, 0}, {math.NaN(), 1}}},
+		{name: "infinity", points: [][]float64{{1, 0}, {math.Inf(1), 1}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := KMeans64(tt.points, KMeans64Config{K: 1})
+			if result.K != 0 || len(result.Assignments) != 0 || len(result.Centroids) != 0 {
+				t.Fatalf("KMeans64 malformed result = %+v, want empty result", result)
+			}
+		})
+	}
+}
+
 func TestComputeClusterCentroids64_SkipsOutOfRangeAssignments(t *testing.T) {
 	t.Parallel()
 
@@ -153,5 +194,44 @@ func TestSilhouetteScoresAndOptimalK64(t *testing.T) {
 	bestK, bestScore, assignments, centroids, scores, kValues = FindOptimalK64(points, 2, 3)
 	if bestK < 2 || bestScore <= 0 || len(assignments) != len(points) || len(centroids) == 0 || len(scores) == 0 || len(kValues) == 0 {
 		t.Fatalf("FindOptimalK64 multi-point = bestK=%d score=%v assignments=%d centroids=%d", bestK, bestScore, len(assignments), len(centroids))
+	}
+}
+
+func TestFindOptimalK64RejectsMalformedInputsAndImpossibleRanges(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		points [][]float64
+		minK   int
+		maxK   int
+	}{
+		{name: "empty", minK: 2, maxK: 3},
+		{name: "zero dimension", points: [][]float64{{}}, minK: 2, maxK: 3},
+		{name: "ragged", points: [][]float64{{1, 0}, {1}}, minK: 2, maxK: 3},
+		{name: "NaN", points: [][]float64{{1, 0}, {math.NaN(), 1}}, minK: 2, maxK: 3},
+		{name: "infinity", points: [][]float64{{1, 0}, {math.Inf(1), 1}}, minK: 2, maxK: 3},
+		{name: "minimum exceeds possible k", points: [][]float64{{1}, {2}, {3}}, minK: 3, maxK: 4},
+		{name: "maximum below minimum for small input", points: [][]float64{{1}, {2}}, minK: 3, maxK: 2},
+		{name: "maximum below minimum", points: [][]float64{{1}, {2}, {3}, {4}}, minK: 3, maxK: 2},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			bestK, bestScore, assignments, centroids, scores, kValues := FindOptimalK64(tt.points, tt.minK, tt.maxK)
+			if bestK != 0 || bestScore != 0 || assignments != nil || centroids != nil || scores != nil || kValues != nil {
+				t.Fatalf("FindOptimalK64() = (%d, %v, %v, %v, %v, %v), want zero invalid tuple", bestK, bestScore, assignments, centroids, scores, kValues)
+			}
+		})
+	}
+}
+
+func TestFindOptimalK64PreservesValidTwoPointBehavior(t *testing.T) {
+	t.Parallel()
+
+	bestK, bestScore, assignments, centroids, scores, kValues := FindOptimalK64([][]float64{{1, 0}, {0, 1}}, 2, 5)
+	if bestK != 1 || bestScore != 0 || len(assignments) != 2 || centroids != nil || len(scores) != 1 || scores[0] != 0 || len(kValues) != 1 || kValues[0] != 1 {
+		t.Fatalf("FindOptimalK64 two-point result = (%d, %v, %v, %v, %v, %v), want legacy k=1 tuple", bestK, bestScore, assignments, centroids, scores, kValues)
 	}
 }

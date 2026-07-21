@@ -20,6 +20,14 @@ import (
 	"math"
 )
 
+const (
+	maxSerializedCodebookBytes int64 = 256 << 20
+	// Each subspace becomes a separate slice/allocation on load. Bound that
+	// shape independently of float payload bytes so hostile tiny-subspace
+	// headers cannot cause millions of allocations below the byte limit.
+	maxSerializedSubspaces = 1 << 16
+)
+
 // Config defines Product Quantization parameters.
 type Config struct {
 	// NumSubspaces is the number of subspaces (M).
@@ -110,6 +118,9 @@ func (q *Quantizer) Train(vectors [][]float32) error {
 			return fmt.Errorf("vector %d has dimension %d, expected %d",
 				i, len(v), q.config.Dimension)
 		}
+		if err := validateFiniteVector(fmt.Sprintf("vector %d", i), v); err != nil {
+			return err
+		}
 	}
 
 	subspaceDim := q.config.SubspaceDim()
@@ -149,6 +160,9 @@ func (q *Quantizer) Encode(vector []float32) ([]byte, error) {
 	if len(vector) != q.config.Dimension {
 		return nil, fmt.Errorf("vector has dimension %d, expected %d",
 			len(vector), q.config.Dimension)
+	}
+	if err := validateFiniteVector("vector", vector); err != nil {
+		return nil, err
 	}
 
 	codes := make([]byte, q.config.NumSubspaces)
@@ -191,6 +205,9 @@ func (q *Quantizer) Decode(codes []byte) ([]float32, error) {
 		return nil, fmt.Errorf("codes has length %d, expected %d",
 			len(codes), q.config.NumSubspaces)
 	}
+	if err := q.validateCodes(codes); err != nil {
+		return nil, err
+	}
 
 	vector := make([]float32, q.config.Dimension)
 	subspaceDim := q.config.SubspaceDim()
@@ -215,9 +232,15 @@ func (q *Quantizer) AsymmetricDistance(query []float32, codes []byte) (float32, 
 		return 0, fmt.Errorf("query has dimension %d, expected %d",
 			len(query), q.config.Dimension)
 	}
+	if err := validateFiniteVector("query", query); err != nil {
+		return 0, err
+	}
 	if len(codes) != q.config.NumSubspaces {
 		return 0, fmt.Errorf("codes has length %d, expected %d",
 			len(codes), q.config.NumSubspaces)
+	}
+	if err := q.validateCodes(codes); err != nil {
+		return 0, err
 	}
 
 	var totalDist float32
@@ -247,6 +270,9 @@ func (q *Quantizer) BuildLookupTables(query []float32) (LookupTables, error) {
 		return nil, fmt.Errorf("query has dimension %d, expected %d",
 			len(query), q.config.Dimension)
 	}
+	if err := validateFiniteVector("query", query); err != nil {
+		return nil, err
+	}
 
 	tables := make(LookupTables, q.config.NumSubspaces)
 	subspaceDim := q.config.SubspaceDim()
@@ -262,6 +288,15 @@ func (q *Quantizer) BuildLookupTables(query []float32) (LookupTables, error) {
 	}
 
 	return tables, nil
+}
+
+func validateFiniteVector(name string, vector []float32) error {
+	for i, value := range vector {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return fmt.Errorf("%s has non-finite value at index %d: %v", name, i, value)
+		}
+	}
+	return nil
 }
 
 // DistanceWithTables computes distance using precomputed lookup tables.
@@ -283,6 +318,10 @@ func (q *Quantizer) DistanceWithTables(tables LookupTables, codes []byte) float3
 // Save serializes the quantizer to a writer.
 // Format: [config][trained flag][codebooks...]
 func (q *Quantizer) Save(w io.Writer) error {
+	if err := q.validateState(); err != nil {
+		return fmt.Errorf("invalid quantizer state: %w", err)
+	}
+
 	// Write config
 	if err := binary.Write(w, binary.LittleEndian, int32(q.config.NumSubspaces)); err != nil {
 		return fmt.Errorf("write NumSubspaces: %w", err)
@@ -331,29 +370,33 @@ func (q *Quantizer) Load(r io.Reader) error {
 	if err := binary.Read(r, binary.LittleEndian, &trained); err != nil {
 		return fmt.Errorf("read trained flag: %w", err)
 	}
+	if trained != 0 && trained != 1 {
+		return fmt.Errorf("invalid trained flag: %d", trained)
+	}
 
-	q.config = Config{
+	loaded := Quantizer{config: Config{
 		NumSubspaces: int(numSubspaces),
 		NumCentroids: int(numCentroids),
 		Dimension:    int(dimension),
-	}
+	}, trained: trained == 1}
 
-	if err := q.config.Validate(); err != nil {
+	if err := loaded.config.Validate(); err != nil {
+		return fmt.Errorf("invalid loaded config: %w", err)
+	}
+	if _, err := serializedCodebookBytes(loaded.config); err != nil {
 		return fmt.Errorf("invalid loaded config: %w", err)
 	}
 
-	q.trained = trained != 0
-
 	// Read codebooks if trained
-	if q.trained {
-		subspaceDim := q.config.SubspaceDim()
-		q.codebooks = make([][]float32, q.config.NumSubspaces)
-		for m := 0; m < q.config.NumSubspaces; m++ {
-			q.codebooks[m] = make([]float32, q.config.NumCentroids*subspaceDim)
-			if err := binary.Read(r, binary.LittleEndian, q.codebooks[m]); err != nil {
+	if loaded.trained {
+		subspaceDim := loaded.config.SubspaceDim()
+		loaded.codebooks = make([][]float32, loaded.config.NumSubspaces)
+		for m := 0; m < loaded.config.NumSubspaces; m++ {
+			loaded.codebooks[m] = make([]float32, loaded.config.NumCentroids*subspaceDim)
+			if err := binary.Read(r, binary.LittleEndian, loaded.codebooks[m]); err != nil {
 				return fmt.Errorf("read codebook %d: %w", m, err)
 			}
-			for i, v := range q.codebooks[m] {
+			for i, v := range loaded.codebooks[m] {
 				if math.IsNaN(float64(v)) || math.IsInf(float64(v), 0) {
 					return fmt.Errorf("codebook %d: non-finite value at index %d: %v", m, i, v)
 				}
@@ -361,7 +404,59 @@ func (q *Quantizer) Load(r io.Reader) error {
 		}
 	}
 
+	*q = loaded
 	return nil
+}
+
+func (q *Quantizer) validateCodes(codes []byte) error {
+	for m, code := range codes {
+		if int(code) >= q.config.NumCentroids {
+			return fmt.Errorf("codes[%d]=%d must be less than NumCentroids %d", m, code, q.config.NumCentroids)
+		}
+	}
+	return nil
+}
+
+func (q *Quantizer) validateState() error {
+	if err := q.config.Validate(); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	if _, err := serializedCodebookBytes(q.config); err != nil {
+		return err
+	}
+	if !q.trained {
+		if len(q.codebooks) != 0 {
+			return errors.New("untrained quantizer has codebooks")
+		}
+		return nil
+	}
+	if len(q.codebooks) != q.config.NumSubspaces {
+		return fmt.Errorf("codebook count %d, expected %d", len(q.codebooks), q.config.NumSubspaces)
+	}
+	expectedLen := q.config.NumCentroids * q.config.SubspaceDim()
+	for m, codebook := range q.codebooks {
+		if len(codebook) != expectedLen {
+			return fmt.Errorf("codebook %d has length %d, expected %d", m, len(codebook), expectedLen)
+		}
+		for i, value := range codebook {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return fmt.Errorf("codebook %d has non-finite value at index %d: %v", m, i, value)
+			}
+		}
+	}
+	return nil
+}
+
+func serializedCodebookBytes(config Config) (int64, error) {
+	if config.NumSubspaces > maxSerializedSubspaces {
+		return 0, fmt.Errorf("serialized codebooks exceed %d-subspace limit", maxSerializedSubspaces)
+	}
+	bytesPerDimension := int64(config.NumCentroids) * 4
+	if int64(config.Dimension) > maxSerializedCodebookBytes/bytesPerDimension {
+		return 0, fmt.Errorf("serialized codebooks exceed %d-byte limit", maxSerializedCodebookBytes)
+	}
+	bytes := int64(config.Dimension) * bytesPerDimension
+	return bytes, nil
 }
 
 // squaredL2Distance computes the squared Euclidean distance between two vectors.

@@ -120,3 +120,31 @@ func TestTuneWeightsInvalidInput(t *testing.T) {
 		t.Fatalf("empty weights report = %+v, want empty", got)
 	}
 }
+
+func TestTuneWeightsCanonicalizesCandidatesBeforeMMR(t *testing.T) {
+	t.Parallel()
+
+	report := TuneWeights([]TuneCase{{
+		Query: EvalQuery{ID: "q", Relevant: map[string]float64{"a": 1, "b": 1}},
+		Candidates: []TuneCandidate{
+			{ID: "a", Signals: ScoreSignals{Embedding: 0.7}, Embedding: []float64{1, 0}, Topic: "first"},
+			{ID: "a", Signals: ScoreSignals{Embedding: 1}, Embedding: []float64{1, 0}, Topic: "duplicate"},
+			{ID: "b", Signals: ScoreSignals{Embedding: 0.8}, Embedding: []float64{0, 1}},
+		},
+	}}, TuneConfig{K: 2, Weights: []Weights{{Embedding: 1}}, MMRLambdas: []float64{1}})
+
+	if !report.HasBest {
+		t.Fatal("HasBest = false, want true")
+	}
+	approxEqual(t, "RecallAtK", report.Best.Metrics.RecallAtK, 1)
+	approxEqual(t, "PrecisionAtK", report.Best.Metrics.PrecisionAtK, 1)
+
+	ranked := rankTuneCandidates([]TuneCandidate{
+		{ID: "a", Signals: ScoreSignals{Embedding: 0.7}, Topic: "first"},
+		{ID: "a", Signals: ScoreSignals{Embedding: 1}, Topic: "duplicate"},
+		{ID: "b", Signals: ScoreSignals{Embedding: 0.8}},
+	}, Weights{Embedding: 1}, 2, 0, false)
+	if len(ranked) != 2 || ranked[0].ID != "b" || ranked[1].ID != "a" || ranked[1].Score != 0.7 || ranked[1].Topic != "first" {
+		t.Fatalf("ranked candidates = %+v, want b then first a occurrence", ranked)
+	}
+}

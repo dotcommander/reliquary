@@ -96,16 +96,22 @@ func normalizedCursor(n normalizedText, cursor int) int {
 }
 
 type normalizedText struct {
-	text   string
-	starts []int
-	ends   []int
+	text      string
+	starts    []int
+	ends      []int
+	sourceLen int
 }
 
 func (n normalizedText) byteRange(normStart, normLen int) (int, int, bool) {
 	if normStart < 0 || normLen <= 0 || normStart+normLen > len(n.starts) {
 		return 0, 0, false
 	}
-	return n.starts[normStart], n.ends[normStart+normLen-1], true
+	start := n.starts[normStart]
+	end := n.ends[normStart+normLen-1]
+	if start < 0 || start > end || end > n.sourceLen {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 func normalizeWithMap(s string) normalizedText {
@@ -114,13 +120,11 @@ func normalizeWithMap(s string) normalizedText {
 	ends := make([]int, 0, len(s))
 	pendingSpace := false
 
-	for bytePos, r := range s {
-		width := utf8.RuneLen(r)
-		if width < 0 {
-			width = 1
-		}
+	for bytePos := 0; bytePos < len(s); {
+		r, width := utf8.DecodeRuneInString(s[bytePos:])
 		if unicode.IsSpace(r) {
 			pendingSpace = b.Len() > 0
+			bytePos += width
 			continue
 		}
 		if pendingSpace {
@@ -135,8 +139,9 @@ func normalizeWithMap(s string) normalizedText {
 			starts = append(starts, bytePos)
 			ends = append(ends, bytePos+width)
 		}
+		bytePos += width
 	}
-	return normalizedText{text: b.String(), starts: starts, ends: ends}
+	return normalizedText{text: b.String(), starts: starts, ends: ends, sourceLen: len(s)}
 }
 
 func normalize(s string) string {

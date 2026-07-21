@@ -178,6 +178,42 @@ func TestTopKFromBlobMinScoreFilters(t *testing.T) {
 	assertScoredIndexes(t, got, want)
 }
 
+func TestTopKFromBlobRejectsNonFiniteValues(t *testing.T) {
+	t.Parallel()
+
+	blobs := [][]byte{
+		EncodeFloat32Vec([]float32{float32(math.NaN()), 0}),
+		EncodeFloat32Vec([]float32{1, 0}),
+		EncodeFloat32Vec([]float32{float32(math.Inf(1)), 0}),
+		EncodeFloat32Vec([]float32{float32(math.Inf(-1)), 0}),
+		EncodeFloat32Vec([]float32{1, 0}),
+		EncodeFloat32Vec([]float32{0.5, 0}),
+	}
+	want := []ScoredIndex{
+		{Index: 1, Score: 1},
+		{Index: 4, Score: 1},
+		{Index: 5, Score: 0.5},
+	}
+	assertScoredIndexes(t, TopKFromBlob([]float32{1, 0}, blobs, 10, -1), want)
+
+	queries := [][]float32{
+		{float32(math.NaN()), 0},
+		{float32(math.Inf(1)), 0},
+		{float32(math.Inf(-1)), 0},
+	}
+	for _, query := range queries {
+		if got := TopKFromBlob(query, blobs, 10, -1); got != nil {
+			t.Fatalf("TopKFromBlob(%v) = %#v, want nil", query, got)
+		}
+	}
+
+	overflowBlobs := [][]byte{
+		EncodeFloat32Vec([]float32{math.MaxFloat32, 0}),
+		EncodeFloat32Vec([]float32{0, 1}),
+	}
+	assertScoredIndexes(t, TopKFromBlob([]float32{2, 0}, overflowBlobs, 10, -1), []ScoredIndex{{Index: 1, Score: 0}})
+}
+
 func assertScoredIndexes(t *testing.T, got, want []ScoredIndex) {
 	t.Helper()
 	if len(got) != len(want) {

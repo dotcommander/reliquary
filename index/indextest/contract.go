@@ -3,8 +3,11 @@ package indextest
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"strings"
 	"sync"
 	"testing"
 
@@ -39,19 +42,164 @@ func Run(t *testing.T, newIndex Factory) {
 		}
 	})
 
-	t.Run("delete resets empty index dimension", func(t *testing.T) {
+	t.Run("delete and empty replacement preserve index space", func(t *testing.T) {
+		actions := []struct {
+			name string
+			run  func(indexcontract.Index) error
+		}{
+			{name: "delete all", run: func(idx indexcontract.Index) error {
+				return idx.DeleteDocument(context.Background(), "doc-a")
+			}},
+			{name: "empty replacement", run: func(idx indexcontract.Index) error {
+				return idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{DocumentID: "doc-a"}})
+			}},
+		}
+		for _, action := range actions {
+			t.Run(action.name, func(t *testing.T) {
+				idx := newIndex()
+				mustUpsert(t, idx, []*retrieval.Result{{ID: "a", DocumentID: "doc-a", IndexIdentity: "old", Embedding: []float64{1, 0}}})
+				if err := action.run(idx); err != nil {
+					t.Fatalf("empty index action: %v", err)
+				}
+				if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Identity: "new"}); !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+					t.Fatalf("empty latched identity error = %v", err)
+				}
+				if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Identity: "old", Vector: []float32{1, 0, 0}}); !errors.Is(err, indexcontract.ErrDimensionMismatch) {
+					t.Fatalf("empty latched dimension error = %v", err)
+				}
+				if err := idx.Upsert(context.Background(), []*retrieval.Result{{ID: "b", IndexIdentity: "new", Embedding: []float64{1, 0}}}); !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+					t.Fatalf("empty latched write identity error = %v", err)
+				}
+				if err := idx.Upsert(context.Background(), []*retrieval.Result{{ID: "b", IndexIdentity: "old", Embedding: []float64{1, 0, 0}}}); !errors.Is(err, indexcontract.ErrDimensionMismatch) {
+					t.Fatalf("empty latched write dimension error = %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("delete rejects blank document IDs without mutation", func(t *testing.T) {
 		idx := newIndex()
 		mustUpsert(t, idx, []*retrieval.Result{
-			{ID: "a", DocumentID: "doc-a", Embedding: []float64{1, 0}},
-			{ID: "unembedded", DocumentID: "doc-b"},
+			{ID: "blank", DocumentID: "", Content: "preserved blank", Embedding: []float64{1, 0}},
+			{ID: "space", DocumentID: " \t\n", Content: "preserved whitespace", Embedding: []float64{1, 0}},
+			{ID: "valid", DocumentID: "doc-a", Content: "preserved valid", Embedding: []float64{1, 0}},
+		})
+		for _, documentID := range []string{"", " \t\n"} {
+			if err := idx.DeleteDocument(context.Background(), documentID); !errors.Is(err, indexcontract.ErrInvalidDocumentID) {
+				t.Fatalf("DeleteDocument(%q) error = %v, want %v", documentID, err, indexcontract.ErrInvalidDocumentID)
+			}
+			got := mustSearch(t, idx, indexcontract.IndexQuery{Vector: []float32{1, 0}})
+			if ids := resultIDs(got); ids != "blank,space,valid" {
+				t.Fatalf("state after DeleteDocument(%q) = %#v", documentID, got)
+			}
+		}
+	})
+
+	t.Run("delete uses exact document ownership", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{
+			{ID: "doc-a#0", DocumentID: "doc-a", Embedding: []float64{1, 0}},
+			{ID: "doc-a#legacy", Content: "unowned", Embedding: []float64{1, 0}},
+			{ID: "doc-a#1#0", Content: "nested unowned", Embedding: []float64{1, 0}},
+			{ID: "other", DocumentID: "doc-b", Embedding: []float64{1, 0}},
 		})
 		if err := idx.DeleteDocument(context.Background(), "doc-a"); err != nil {
 			t.Fatalf("DeleteDocument: %v", err)
 		}
-		mustUpsert(t, idx, []*retrieval.Result{{ID: "b", DocumentID: "doc-c", Embedding: []float64{1, 0, 0}}})
-		got := mustSearch(t, idx, indexcontract.IndexQuery{Vector: []float32{1, 0, 0}})
-		if len(got) != 2 || got[0].ID != "b" {
-			t.Fatalf("Search after delete and dimension change = %#v", got)
+		got := mustSearch(t, idx, indexcontract.IndexQuery{Vector: []float32{1, 0}})
+		if ids := resultIDs(got); ids != "doc-a#1#0,doc-a#legacy,other" {
+			t.Fatalf("DeleteDocument exact ownership IDs = %s, want doc-a#1#0,doc-a#legacy,other", ids)
+		}
+	})
+
+	t.Run("replace complete document revisions", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{
+			{ID: "doc-a#0", DocumentID: "doc-a", Content: "old zero", Embedding: []float64{1, 0}},
+			{ID: "doc-a#1", DocumentID: "doc-a", Content: "old one", Embedding: []float64{0, 1}},
+			{ID: "doc-a#legacy", Content: "unowned", Embedding: []float64{1, 0}},
+			{ID: "doc-b#0", DocumentID: "doc-b", Content: "retained", Embedding: []float64{1, 0}},
+		})
+		if err := idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+			DocumentID: "doc-a",
+			Results:    []*retrieval.Result{{ID: "doc-a#0", DocumentID: "doc-a", Content: "new", Embedding: []float64{1, 0}}},
+		}}); err != nil {
+			t.Fatalf("ReplaceDocuments shorter revision: %v", err)
+		}
+		got := mustSearch(t, idx, indexcontract.IndexQuery{})
+		if ids := resultIDs(got); ids != "doc-a#0,doc-a#legacy,doc-b#0" || got[0].Content != "new" {
+			t.Fatalf("shorter replacement = %#v", got)
+		}
+		if err := idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{DocumentID: "doc-a"}}); err != nil {
+			t.Fatalf("ReplaceDocuments empty revision: %v", err)
+		}
+		got = mustSearch(t, idx, indexcontract.IndexQuery{})
+		if ids := resultIDs(got); ids != "doc-a#legacy,doc-b#0" {
+			t.Fatalf("empty replacement IDs = %s, want doc-a#legacy,doc-b#0", ids)
+		}
+	})
+
+	t.Run("replace batch validates and rolls back atomically", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{
+			{ID: "doc-a#0", DocumentID: "doc-a", Content: "old a", IndexIdentity: "space", Embedding: []float64{1, 0}},
+			{ID: "doc-b#0", DocumentID: "doc-b", Content: "old b", IndexIdentity: "space", Embedding: []float64{0, 1}},
+		})
+		invalidBatches := []struct {
+			name         string
+			replacements []indexcontract.DocumentReplacement
+			want         error
+		}{
+			{name: "blank", replacements: []indexcontract.DocumentReplacement{{DocumentID: " "}}, want: indexcontract.ErrInvalidDocumentID},
+			{name: "duplicate", replacements: []indexcontract.DocumentReplacement{{DocumentID: "doc-a"}, {DocumentID: "doc-a"}}, want: indexcontract.ErrDuplicateDocumentID},
+			{name: "duplicate result ID", replacements: []indexcontract.DocumentReplacement{
+				{DocumentID: "doc-a", Results: []*retrieval.Result{{ID: "same", DocumentID: "doc-a", IndexIdentity: "space", Embedding: []float64{1, 0}}}},
+				{DocumentID: "doc-b", Results: []*retrieval.Result{{ID: "same", DocumentID: "doc-b", IndexIdentity: "space", Embedding: []float64{1, 0}}}},
+			}, want: indexcontract.ErrResultIDConflict},
+			{name: "retained result ID", replacements: []indexcontract.DocumentReplacement{
+				{DocumentID: "doc-a", Results: []*retrieval.Result{{ID: "doc-b#0", DocumentID: "doc-a", IndexIdentity: "space", Embedding: []float64{1, 0}}}},
+			}, want: indexcontract.ErrResultIDConflict},
+			{name: "dimension", replacements: []indexcontract.DocumentReplacement{
+				{DocumentID: "doc-a", Results: []*retrieval.Result{{ID: "doc-a#0", DocumentID: "doc-a", Content: "new a", IndexIdentity: "space", Embedding: []float64{1, 0, 0}}}},
+				{DocumentID: "doc-b", Results: []*retrieval.Result{{ID: "doc-b#0", DocumentID: "doc-b", Content: "new b", IndexIdentity: "space", Embedding: []float64{1, 0}}}},
+			}, want: indexcontract.ErrDimensionMismatch},
+			{name: "identity", replacements: []indexcontract.DocumentReplacement{
+				{DocumentID: "doc-a", Results: []*retrieval.Result{{ID: "doc-a#0", DocumentID: "doc-a", Content: "new a", IndexIdentity: "other", Embedding: []float64{1, 0}}}},
+			}, want: indexcontract.ErrIdentityMismatch},
+		}
+		for _, tc := range invalidBatches {
+			t.Run(tc.name, func(t *testing.T) {
+				if err := idx.ReplaceDocuments(context.Background(), tc.replacements); !errors.Is(err, tc.want) {
+					t.Fatalf("ReplaceDocuments error = %v, want %v", err, tc.want)
+				}
+				got := mustSearch(t, idx, indexcontract.IndexQuery{Identity: "space"})
+				if ids := resultIDs(got); ids != "doc-a#0,doc-b#0" || got[0].Content != "old a" || got[1].Content != "old b" {
+					t.Fatalf("state changed after failed replacement: %#v", got)
+				}
+			})
+		}
+	})
+
+	t.Run("replace all documents rejects a new vector space and rolls back", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{{ID: "old#0", DocumentID: "old", Content: "preserved", IndexIdentity: "old", Embedding: []float64{1, 0}}})
+		err := idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+			DocumentID: "old",
+			Results:    []*retrieval.Result{{ID: "old#0", DocumentID: "old", IndexIdentity: "new", Embedding: []float64{1, 0, 0}}},
+		}})
+		if !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+			t.Fatalf("ReplaceDocuments identity error = %v", err)
+		}
+		err = idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+			DocumentID: "old",
+			Results:    []*retrieval.Result{{ID: "old#0", DocumentID: "old", IndexIdentity: "old", Embedding: []float64{1, 0, 0}}},
+		}})
+		if !errors.Is(err, indexcontract.ErrDimensionMismatch) {
+			t.Fatalf("ReplaceDocuments dimension error = %v", err)
+		}
+		got := mustSearch(t, idx, indexcontract.IndexQuery{Identity: "old", Vector: []float32{1, 0}})
+		if len(got) != 1 || got[0].Content != "preserved" {
+			t.Fatalf("state after rejected replacement = %#v", got)
 		}
 	})
 
@@ -77,17 +225,72 @@ func Run(t *testing.T, newIndex Factory) {
 	t.Run("filters", func(t *testing.T) {
 		idx := newIndex()
 		mustUpsert(t, idx, []*retrieval.Result{
-			{ID: "a", DocumentID: "doc-a", Filename: "a.md", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "one", "active": true}},
-			{ID: "b", DocumentID: "doc-b", Filename: "b.md", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "two", "active": false}},
+			{ID: "a", DocumentID: "doc-a", Filename: "a.md", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "one", "active": true, "literal.key": "value", `literal"key`: "quoted", "array[0]": "bracketed", "nullable": nil}},
+			{ID: "b", DocumentID: "doc-b", Filename: "b.md", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "two", "active": false, "literal": map[string]any{"key": "value"}, `literal"key`: "other", "array": []any{"bracketed"}, "nullable": "set"}},
+			{ID: "c", DocumentID: "doc-c", Filename: "c.md", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "three"}},
 		})
 		filters := []map[string]any{
 			{"id": "a"}, {"document_id": "doc-a"}, {"filename": "a.md"},
 			{"tenant": "one"}, {"tenant": "one", "active": true},
+			{"literal.key": "value"}, {`literal"key`: "quoted"}, {"array[0]": "bracketed"}, {"nullable": nil},
 		}
 		for _, filter := range filters {
 			got := mustSearch(t, idx, indexcontract.IndexQuery{Filter: filter})
 			if len(got) != 1 || got[0].ID != "a" {
 				t.Fatalf("filter %#v = %#v", filter, got)
+			}
+		}
+	})
+
+	t.Run("JSON scalar filter semantics", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{
+			{ID: "exact", Metadata: map[string]any{"one": 1, "large": uint64(9007199254740993), "fraction": 1.5, "nullable": nil, "string": "1", "boolean": true}},
+			{ID: "near", Metadata: map[string]any{"one": 2, "large": uint64(9007199254740992), "fraction": -1.5, "string": "true", "boolean": false}},
+		})
+		oneValues := []any{
+			int(1), int8(1), int16(1), int32(1), int64(1),
+			uint(1), uint8(1), uint16(1), uint32(1), uint64(1),
+			float32(1), float64(1), json.Number("1.0"),
+		}
+		for _, value := range oneValues {
+			got := mustSearch(t, idx, indexcontract.IndexQuery{Filter: map[string]any{"one": value}})
+			if len(got) != 1 || got[0].ID != "exact" {
+				t.Fatalf("numeric filter %T(%v) = %#v", value, value, got)
+			}
+		}
+		matches := []map[string]any{
+			{"large": uint64(9007199254740993)},
+			{"large": json.Number("9007199254740993")},
+			{"fraction": 1.5},
+			{"nullable": nil},
+			{"string": "1"},
+			{"boolean": true},
+		}
+		for _, filter := range matches {
+			got := mustSearch(t, idx, indexcontract.IndexQuery{Filter: filter})
+			if len(got) != 1 || got[0].ID != "exact" {
+				t.Fatalf("filter %#v = %#v", filter, got)
+			}
+		}
+		noMatches := []map[string]any{
+			{"id": "exact", "large": uint64(9007199254740992)},
+			{"id": "exact", "fraction": -1.5},
+			{"one": -1},
+			{"missing": nil},
+			{"string": 1},
+			{"boolean": "true"},
+			{"id": 1},
+		}
+		for _, filter := range noMatches {
+			got := mustSearch(t, idx, indexcontract.IndexQuery{Filter: filter})
+			if len(got) != 0 {
+				t.Fatalf("filter %#v unexpectedly matched %#v", filter, got)
+			}
+		}
+		for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+			if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Filter: map[string]any{"one": value}}); err == nil {
+				t.Fatalf("non-finite filter %v did not fail", value)
 			}
 		}
 	})
@@ -102,6 +305,12 @@ func Run(t *testing.T, newIndex Factory) {
 
 		canceled, cancel := context.WithCancel(context.Background())
 		cancel()
+		if err := idx.ReplaceDocuments(canceled, []indexcontract.DocumentReplacement{{DocumentID: "doc"}}); !errors.Is(err, context.Canceled) {
+			t.Fatalf("pre-canceled ReplaceDocuments error = %v", err)
+		}
+		if err := idx.DeleteDocument(canceled, ""); !errors.Is(err, context.Canceled) {
+			t.Fatalf("pre-canceled DeleteDocument error = %v", err)
+		}
 		if _, err := idx.Search(canceled, indexcontract.IndexQuery{}); !errors.Is(err, context.Canceled) {
 			t.Fatalf("pre-canceled Search error = %v", err)
 		}
@@ -119,6 +328,77 @@ func Run(t *testing.T, newIndex Factory) {
 		}
 		if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Vector: []float32{1}}); !errors.Is(err, indexcontract.ErrDimensionMismatch) {
 			t.Fatalf("Search mismatch error = %v", err)
+		}
+	})
+
+	t.Run("non-finite vectors are rejected without mutation or latching", func(t *testing.T) {
+		values := []struct {
+			name  string
+			value float64
+		}{
+			{name: "NaN", value: math.NaN()},
+			{name: "positive infinity", value: math.Inf(1)},
+			{name: "negative infinity", value: math.Inf(-1)},
+		}
+		for _, tc := range values {
+			t.Run(tc.name, func(t *testing.T) {
+				idx := newIndex()
+				mustUpsert(t, idx, []*retrieval.Result{{ID: "kept", DocumentID: "doc", Content: "old", IndexIdentity: "space", Embedding: []float64{1, 0}}})
+
+				if err := idx.Upsert(context.Background(), []*retrieval.Result{{ID: "bad-upsert", IndexIdentity: "space", Embedding: []float64{tc.value, 0}}}); err == nil || !strings.Contains(err.Error(), "must be finite") {
+					t.Fatalf("Upsert non-finite error = %v", err)
+				}
+				if err := idx.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+					DocumentID: "doc",
+					Results:    []*retrieval.Result{{ID: "replacement", DocumentID: "doc", Content: "new", IndexIdentity: "space", Embedding: []float64{tc.value, 0}}},
+				}}); err == nil || !strings.Contains(err.Error(), "must be finite") {
+					t.Fatalf("ReplaceDocuments non-finite error = %v", err)
+				}
+				if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Identity: "space", Vector: []float32{float32(tc.value), 0}}); err == nil || !strings.Contains(err.Error(), "must be finite") {
+					t.Fatalf("Search non-finite error = %v", err)
+				}
+				got := mustSearch(t, idx, indexcontract.IndexQuery{Identity: "space", Vector: []float32{1, 0}})
+				if len(got) != 1 || got[0].ID != "kept" || got[0].Content != "old" {
+					t.Fatalf("state after rejected vectors = %#v", got)
+				}
+
+				freshUpsert := newIndex()
+				if err := freshUpsert.Upsert(context.Background(), []*retrieval.Result{{ID: "bad", IndexIdentity: "bad", Embedding: []float64{tc.value, 0}}}); err == nil {
+					t.Fatal("fresh non-finite Upsert succeeded")
+				}
+				mustUpsert(t, freshUpsert, []*retrieval.Result{{ID: "good", IndexIdentity: "good", Embedding: []float64{1, 0, 0}}})
+
+				freshReplacement := newIndex()
+				if err := freshReplacement.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+					DocumentID: "bad",
+					Results:    []*retrieval.Result{{ID: "bad", DocumentID: "bad", IndexIdentity: "bad", Embedding: []float64{tc.value, 0}}},
+				}}); err == nil {
+					t.Fatal("fresh non-finite ReplaceDocuments succeeded")
+				}
+				if err := freshReplacement.ReplaceDocuments(context.Background(), []indexcontract.DocumentReplacement{{
+					DocumentID: "good",
+					Results:    []*retrieval.Result{{ID: "good", DocumentID: "good", IndexIdentity: "good", Embedding: []float64{1, 0, 0}}},
+				}}); err != nil {
+					t.Fatalf("valid replacement after rejected latch: %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("vector validation preserves identity and dimension precedence", func(t *testing.T) {
+		idx := newIndex()
+		mustUpsert(t, idx, []*retrieval.Result{{ID: "kept", IndexIdentity: "space", Embedding: []float64{1, 0}}})
+		if err := idx.Upsert(context.Background(), []*retrieval.Result{{ID: "bad", IndexIdentity: "other", Embedding: []float64{math.NaN(), 0, 0}}}); !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+			t.Fatalf("Upsert precedence error = %v, want identity mismatch", err)
+		}
+		if err := idx.Upsert(context.Background(), []*retrieval.Result{{ID: "bad", IndexIdentity: "space", Embedding: []float64{math.NaN(), 0, 0}}}); !errors.Is(err, indexcontract.ErrDimensionMismatch) {
+			t.Fatalf("Upsert precedence error = %v, want dimension mismatch", err)
+		}
+		if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Identity: "other", Vector: []float32{float32(math.NaN()), 0, 0}}); !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+			t.Fatalf("Search precedence error = %v, want identity mismatch", err)
+		}
+		if _, err := idx.Search(context.Background(), indexcontract.IndexQuery{Identity: "space", Vector: []float32{float32(math.NaN()), 0, 0}}); !errors.Is(err, indexcontract.ErrDimensionMismatch) {
+			t.Fatalf("Search precedence error = %v, want dimension mismatch", err)
 		}
 	})
 
@@ -147,8 +427,8 @@ func Run(t *testing.T, newIndex Factory) {
 		if err := resetter.Reset(context.Background()); err != nil {
 			t.Fatalf("Reset: %v", err)
 		}
-		mustUpsert(t, idx, []*retrieval.Result{{ID: "new", IndexIdentity: "new", Embedding: []float64{1, 0}}})
-		got := mustSearch(t, idx, indexcontract.IndexQuery{Identity: "new", Vector: []float32{1, 0}})
+		mustUpsert(t, idx, []*retrieval.Result{{ID: "new", IndexIdentity: "new", Embedding: []float64{1, 0, 0}}})
+		got := mustSearch(t, idx, indexcontract.IndexQuery{Identity: "new", Vector: []float32{1, 0, 0}})
 		if len(got) != 1 || got[0].ID != "new" {
 			t.Fatalf("Search after Reset = %#v", got)
 		}

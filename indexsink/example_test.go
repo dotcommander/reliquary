@@ -14,12 +14,17 @@ import (
 // a real Index (storage/sqlite, storage/postgres, ...).
 func ExampleSink() {
 	idx := &fakeIndex{}
+	sink, err := NewSink(idx, Config{IndexIdentity: "example-space"})
+	if err != nil {
+		fmt.Println("sink error:", err)
+		return
+	}
 
 	pipe := ingest.NewPipeline[string, *retrieval.Result](
 		exampleReader{},
 		exampleDecoder{},
 		exampleMapper{},
-		NewSink(idx),
+		sink,
 	)
 
 	report, err := pipe.Run(context.Background(), ingest.Cursor{Source: "example"})

@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"reflect"
 	"slices"
 
 	indexcontract "github.com/dotcommander/reliquary/index"
@@ -13,12 +12,15 @@ import (
 
 // Search copies, filters, scores, and limits an in-memory candidate set.
 func Search(ctx context.Context, query indexcontract.IndexQuery, items []*retrieval.Result) ([]*retrieval.Result, error) {
+	if err := ValidateFilter(query.Filter); err != nil {
+		return nil, fmt.Errorf("reliquary index: %w", err)
+	}
 	candidates := make([]*retrieval.Result, 0, len(items))
 	for _, item := range items {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if item == nil || !matches(item, query.Filter) {
+		if item == nil || !MatchesFilter(item, query.Filter) {
 			continue
 		}
 		if len(query.Vector) > 0 && len(item.Embedding) > 0 && len(query.Vector) != len(item.Embedding) {
@@ -59,24 +61,4 @@ func clone(item *retrieval.Result) *retrieval.Result {
 		}
 	}
 	return &cp
-}
-
-func matches(item *retrieval.Result, filter map[string]any) bool {
-	for key, want := range filter {
-		var got any
-		switch key {
-		case "id":
-			got = item.ID
-		case "document_id":
-			got = item.DocumentID
-		case "filename":
-			got = item.Filename
-		default:
-			got = item.Metadata[key]
-		}
-		if !reflect.DeepEqual(got, want) {
-			return false
-		}
-	}
-	return true
 }

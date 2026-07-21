@@ -8,7 +8,16 @@ import (
 	"testing"
 
 	"github.com/dotcommander/reliquary/embedding"
+	"github.com/dotcommander/reliquary/embedding/embeddingtest"
 )
+
+func TestHashingEmbeddingContract(t *testing.T) {
+	t.Parallel()
+
+	embeddingtest.Run(t, func() embeddings.Embedder {
+		return NewHashing(16)
+	})
+}
 
 func TestNewHashingInvalidDimensionsUseDefault(t *testing.T) {
 	t.Parallel()

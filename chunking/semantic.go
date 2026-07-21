@@ -3,8 +3,11 @@ package chunking
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/dotcommander/reliquary/internal/validate"
 )
 
 // BatchEmbedder is satisfied by any embedder that can embed multiple texts.
@@ -103,7 +106,7 @@ type SemanticChunker struct {
 // boundary chunking on embedding failure. Returns ErrNilEmbedder if embedder
 // is nil.
 func NewSemanticChunker(embedder BatchEmbedder, opts SemanticOpts) (*SemanticChunker, error) {
-	if embedder == nil {
+	if validate.IsNil(embedder) {
 		return nil, ErrNilEmbedder
 	}
 	return &SemanticChunker{
@@ -132,7 +135,7 @@ func PlanSemanticChunks(text string, units []SemanticUnit, embeddings [][]float3
 
 	sims := make([]float64, len(embeddings)-1)
 	for i := range len(embeddings) - 1 {
-		sims[i] = dotProduct(embeddings[i], embeddings[i+1])
+		sims[i] = cosineSimilarity(embeddings[i], embeddings[i+1])
 	}
 	if opts.SmoothingWindow >= 2 {
 		sims = smoothSimilarities(sims, opts.SmoothingWindow)
@@ -169,6 +172,11 @@ func validEmbeddingBatch(embeddings [][]float32) bool {
 	for _, emb := range embeddings {
 		if len(emb) != dim || isZeroVector(emb) {
 			return false
+		}
+		for _, value := range emb {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return false
+			}
 		}
 	}
 	return true

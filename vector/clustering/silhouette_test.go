@@ -116,6 +116,25 @@ func TestFindOptimalKWithHAC(t *testing.T) {
 	if result.BestK < 2 {
 		t.Errorf("expected BestK >= 2, got %d", result.BestK)
 	}
+	if len(result.Scores) != 2 || len(result.KValues) != 2 || len(result.Assignments) != len(embeddings) || len(result.Centroids) != result.BestK {
+		t.Fatalf("incoherent feasible HAC metadata: %+v", result)
+	}
+	if result.KValues[0] != 2 || result.KValues[1] != 3 {
+		t.Fatalf("KValues = %v, want [2 3]", result.KValues)
+	}
+}
+
+func TestFindOptimalKWithHACImpossibleRange(t *testing.T) {
+	t.Parallel()
+
+	result := FindOptimalK([][]float64{{1, 0}, {0, 1}, {-1, 0}, {0, -1}}, SilhouetteConfig{
+		MinK:      4,
+		MaxK:      10,
+		Algorithm: "hac",
+	})
+	if result.BestK != 0 || result.BestScore != 0 || result.Scores != nil || result.KValues != nil || result.Assignments != nil || result.Centroids != nil {
+		t.Fatalf("FindOptimalK impossible range = %+v, want empty result", result)
+	}
 }
 
 func TestFindOptimalKSmallDataset(t *testing.T) {

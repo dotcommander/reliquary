@@ -12,6 +12,11 @@ import (
 // describe the same candidate set.
 var ErrEmbeddingCountMismatch = errors.New("retrieval: embedding count mismatch")
 
+// ErrNilResult reports a nil result in a batch passed to EmbedResults. Unlike
+// AttachEmbeddings, EmbedResults needs every result in order to build the input
+// batch and therefore rejects sparse result slices before calling the embedder.
+var ErrNilResult = errors.New("retrieval: nil result")
+
 // EmbeddingVector converts a provider-neutral embeddings.Vector into the
 // float64 vector space used by retrieval scoring.
 func EmbeddingVector(v embeddings.Vector) []float64 {
@@ -41,10 +46,20 @@ func EmbedResults(ctx context.Context, e embeddings.Embedder, results []*Result)
 	}
 	texts := make([]string, len(results))
 	for i, r := range results {
+		if r == nil {
+			return fmt.Errorf("%w at index %d", ErrNilResult, i)
+		}
 		texts[i] = r.Content
 	}
-	embedded, err := e.Embed(ctx, embeddings.Request{Inputs: texts})
+	request := embeddings.Request{Inputs: texts}
+	embedded, err := e.Embed(ctx, request)
 	if err != nil {
+		return err
+	}
+	if err := embeddings.ValidateResult(request, embedded); err != nil {
+		if len(embedded.Vectors) != len(results) {
+			return fmt.Errorf("%w: %w", ErrEmbeddingCountMismatch, err)
+		}
 		return err
 	}
 	return AttachEmbeddings(results, embedded.Vectors)
@@ -52,7 +67,9 @@ func EmbedResults(ctx context.Context, e embeddings.Embedder, results []*Result)
 
 // AttachEmbeddings copies embedding vectors onto matching retrieval results by
 // index. It returns an error rather than silently dropping vectors because a
-// count mismatch means the caller's scoring identity is ambiguous.
+// count mismatch means the caller's scoring identity is ambiguous. Unlike
+// EmbedResults, it preserves its existing sparse-destination behavior: a nil
+// result consumes the matching vector without mutation.
 func AttachEmbeddings(results []*Result, vectors []embeddings.Vector) error {
 	if len(results) != len(vectors) {
 		return fmt.Errorf("%w: %d results, %d vectors", ErrEmbeddingCountMismatch, len(results), len(vectors))

@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"math"
 	"testing"
 )
 
@@ -141,6 +142,32 @@ func TestAdaptiveThreshold_ClampHigh(t *testing.T) {
 	got := AdaptiveThreshold([]float32{0.98, 0.99, 1.0})
 	if !approxEq32(got, 0.9, 1e-6) {
 		t.Errorf("AdaptiveThreshold clamp-high: got %f, want 0.9", got)
+	}
+}
+
+func TestAdaptiveThreshold_ConstantAndNearConstantRemainFinite(t *testing.T) {
+	t.Parallel()
+
+	constant := make([]float32, 10_000)
+	for i := range constant {
+		constant[i] = 0.7
+	}
+	nearConstant := append([]float32(nil), constant...)
+	nearConstant[len(nearConstant)-1] = math.Nextafter32(0.7, 1)
+
+	for name, similarities := range map[string][]float32{
+		"constant":      constant,
+		"near-constant": nearConstant,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := AdaptiveThreshold(similarities)
+			if math.IsNaN(float64(got)) || math.IsInf(float64(got), 0) {
+				t.Fatalf("AdaptiveThreshold: got non-finite threshold %v", got)
+			}
+			if got < 0.3 || got > 0.9 {
+				t.Fatalf("AdaptiveThreshold: got %v, want value in [0.3, 0.9]", got)
+			}
+		})
 	}
 }
 

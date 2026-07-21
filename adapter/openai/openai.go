@@ -51,9 +51,7 @@ func New(client openaisdk.Client, cfg Config) (*Embedder, error) {
 // Embed generates one vector per input in a single provider call.
 func (e *Embedder) Embed(ctx context.Context, request embeddingcontract.Request) (embeddingcontract.Result, error) {
 	model := request.Model
-	if model.Provider == "" {
-		model.Provider = "openai"
-	}
+	model.Provider = "openai"
 	if model.Name == "" {
 		model.Name = e.model
 	}

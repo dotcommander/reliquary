@@ -1,6 +1,7 @@
 package pq
 
 import (
+	"math"
 	"testing"
 )
 
@@ -133,6 +134,35 @@ func TestKMeansErrors(t *testing.T) {
 			_, err := KMeans(tt.vectors, tt.k, tt.maxIter)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("KMeans() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestKMeansAPIsRejectMalformedVectors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		vectors [][]float32
+	}{
+		{name: "zero dimension", vectors: [][]float32{{}, {}}},
+		{name: "ragged", vectors: [][]float32{{1, 2}, {3}}},
+		{name: "NaN", vectors: [][]float32{{1, 2}, {3, float32(math.NaN())}}},
+		{name: "infinity", vectors: [][]float32{{1, 2}, {3, float32(math.Inf(1))}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := KMeansPlusPlus(tt.vectors, 1); err == nil {
+				t.Error("KMeansPlusPlus() error = nil")
+			}
+			if _, err := KMeans(tt.vectors, 1, 2); err == nil {
+				t.Error("KMeans() error = nil")
+			}
+			if _, err := MiniBatchKMeans(tt.vectors, 1, 1, 2); err == nil {
+				t.Error("MiniBatchKMeans() error = nil")
 			}
 		})
 	}

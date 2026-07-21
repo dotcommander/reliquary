@@ -71,6 +71,11 @@ func kmeansInputDims(points [][]float32) (int, bool) {
 		if len(p) != dims {
 			return 0, false
 		}
+		for _, value := range p {
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return 0, false
+			}
+		}
 	}
 	return dims, true
 }

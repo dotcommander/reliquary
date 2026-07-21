@@ -7,32 +7,55 @@ import (
 
 	"github.com/dotcommander/reliquary/document"
 	"github.com/dotcommander/reliquary/embedding"
+	"github.com/dotcommander/reliquary/internal/indexutil"
 	"github.com/dotcommander/reliquary/retrieval"
 )
 
-// Ingest chunks each document with the App's strategy, embeds every chunk with
-// the App's embedder, and stores the embedded chunks. It returns the number of
-// chunks produced.
+// Ingest chunks each document with the App's strategy, embeds every chunk, and
+// atomically replaces all prior chunks for every supplied document. A document
+// that produces no chunks deletes its prior revision. Document IDs must be
+// non-blank and unique within the call. It returns the number of chunks produced.
 func (a *App) Ingest(ctx context.Context, docs ...document.Document) (int, error) {
 	if err := a.ensureReady(); err != nil {
 		return 0, err
+	}
+	seen := make(map[string]struct{}, len(docs))
+	for _, doc := range docs {
+		if strings.TrimSpace(doc.ID) == "" {
+			return 0, ErrInvalidDocumentID
+		}
+		if _, exists := seen[doc.ID]; exists {
+			return 0, fmt.Errorf("%w: %q", ErrDuplicateDocumentID, doc.ID)
+		}
+		seen[doc.ID] = struct{}{}
 	}
 	items, err := retrieval.ResultsFromDocuments(docs, a.strategy, a.size, a.overlap)
 	if err != nil {
 		return 0, err
 	}
-	if len(items) == 0 {
+	if len(docs) == 0 {
 		return 0, nil
 	}
-	if err := retrieval.EmbedResults(ctx, a.embedder, items); err != nil {
-		return 0, err
-	}
-	for _, item := range items {
-		if item != nil {
-			item.IndexIdentity = a.indexIdentity
+	if len(items) > 0 {
+		if err := retrieval.EmbedResults(ctx, a.embedder, items); err != nil {
+			return 0, err
 		}
 	}
-	if err := a.index.Upsert(ctx, items); err != nil {
+	replacements := make([]DocumentReplacement, len(docs))
+	byDocument := make(map[string]int, len(docs))
+	for n, doc := range docs {
+		replacements[n].DocumentID = doc.ID
+		byDocument[doc.ID] = n
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.IndexIdentity = a.indexIdentity
+		n := byDocument[item.DocumentID]
+		replacements[n].Results = append(replacements[n].Results, item)
+	}
+	if err := a.index.ReplaceDocuments(ctx, replacements); err != nil {
 		return 0, err
 	}
 	return len(items), nil
@@ -56,12 +79,13 @@ func (a *App) Search(ctx context.Context, query string, opts ...SearchOption) ([
 	if cfg.err != nil {
 		return nil, cfg.err
 	}
-	embedded, err := a.embedder.Embed(ctx, embeddings.Request{Inputs: []string{query}})
+	request := embeddings.Request{Inputs: []string{query}}
+	embedded, err := a.embedder.Embed(ctx, request)
 	if err != nil {
 		return nil, err
 	}
-	if len(embedded.Vectors) == 0 {
-		return nil, nil
+	if err := embeddings.ValidateResult(request, embedded); err != nil {
+		return nil, err
 	}
 	items, err := a.index.Search(ctx, IndexQuery{
 		Identity: a.indexIdentity,
@@ -132,10 +156,13 @@ func CandidateLimit(n int) SearchOption {
 }
 
 // WithFilter restricts index candidates by reserved result fields (id,
-// document_id, and filename) or scalar metadata values. The filter is
-// snapshotted when the option is created; later caller mutations have no
-// effect. Compound values such as slices and maps cause Search to return an
-// error before embedding the query.
+// document_id, and filename) or JSON-scalar metadata values. Reserved fields
+// match strings only. Metadata keys must be present; explicit nil matches only
+// JSON null, strings and booleans are type-exact, and finite numbers compare by
+// exact JSON numeric value across accepted Go numeric types and json.Number.
+// The filter is snapshotted when the option is created; later caller mutations
+// have no effect. Compound and non-finite values cause Search to return an error
+// before embedding the query.
 func WithFilter(filter map[string]any) SearchOption {
 	snapshot := make(map[string]any, len(filter))
 	for key, value := range filter {
@@ -145,26 +172,14 @@ func WithFilter(filter map[string]any) SearchOption {
 		if c.err != nil {
 			return
 		}
+		if err := indexutil.ValidateFilter(snapshot); err != nil {
+			c.err = fmt.Errorf("reliquary search: %w", err)
+			return
+		}
 		c.filter = make(map[string]any, len(snapshot))
 		for key, value := range snapshot {
-			if !isScalarFilterValue(value) {
-				c.err = fmt.Errorf("reliquary search: filter %q must be scalar", key)
-				return
-			}
 			c.filter[key] = value
 		}
-	}
-}
-
-func isScalarFilterValue(value any) bool {
-	switch value.(type) {
-	case nil, string, bool,
-		int, int8, int16, int32, int64,
-		uint, uint8, uint16, uint32, uint64,
-		float32, float64:
-		return true
-	default:
-		return false
 	}
 }
 

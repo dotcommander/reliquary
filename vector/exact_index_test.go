@@ -1,6 +1,7 @@
 package vectors
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
@@ -182,6 +183,70 @@ func TestNewExactIndexCheckedReportsSkippedRows(t *testing.T) {
 	}
 }
 
+func TestNewExactIndexCheckedSkipsNonFiniteRowsBeforeDuplicateKeys(t *testing.T) {
+	t.Parallel()
+
+	vectors := [][]float32{
+		{float32(math.NaN()), 0},
+		{float32(math.Inf(1)), 0},
+		{float32(math.Inf(-1)), 0},
+		{1, 0},
+		{0, 1},
+	}
+	arena := make([]byte, 0, len(vectors)*8)
+	for _, vector := range vectors {
+		arena = append(arena, EncodeFloat32Vec(vector)...)
+	}
+
+	idx, report := NewExactIndexChecked(2, []IndexChunk{
+		{Group: "same", ChunkIndex: 0, Offset: 0, Length: 8},
+		{Group: "positive-inf", ChunkIndex: 0, Offset: 8, Length: 8},
+		{Group: "negative-inf", ChunkIndex: 0, Offset: 16, Length: 8},
+		{Group: "same", ChunkIndex: 0, Offset: 24, Length: 8},
+		{Group: "finite", ChunkIndex: 0, Offset: 32, Length: 8},
+	}, arena)
+
+	if report.InputRows != 5 || report.IndexedRows != 2 || report.SkippedBadBlob != 3 || report.SkippedDuplicateKey != 0 {
+		t.Fatalf("report = %+v, want input=5 indexed=2 bad_blob=3 duplicate_key=0", report)
+	}
+	results, ok := idx.Search([]float32{1, 0}, 10, -1)
+	if !ok || len(results) != 2 || results[0].Group != "same" || results[1].Group != "finite" {
+		t.Fatalf("Search() = (%+v, %v), want finite groups [same finite]", results, ok)
+	}
+}
+
+func TestExactIndexConstructorsRejectNonPositiveDimensions(t *testing.T) {
+	t.Parallel()
+
+	arena := append(EncodeFloat32Vec([]float32{1}), EncodeFloat32Vec([]float32{0})...)
+	chunks := []IndexChunk{
+		{Group: "a", ChunkIndex: 0, Offset: 0, Length: 4},
+		{Group: "b", ChunkIndex: 0, Offset: 4, Length: 4},
+		{Group: "bad-span", ChunkIndex: 0, Offset: len(arena) + 1, Length: 4},
+	}
+	for _, dims := range []int{0, -1} {
+		t.Run(fmt.Sprintf("dims=%d", dims), func(t *testing.T) {
+			t.Parallel()
+
+			unchecked := NewExactIndex(dims, chunks, arena)
+			if unchecked == nil || unchecked.Len() != 0 {
+				t.Fatalf("NewExactIndex(%d) = %#v with Len %d, want non-nil empty index", dims, unchecked, unchecked.Len())
+			}
+			if results, ok := unchecked.Search(nil, 10, -1); results != nil || ok {
+				t.Fatalf("Search() = (%v, %v), want (nil, false)", results, ok)
+			}
+
+			checked, report := NewExactIndexChecked(dims, chunks, arena)
+			if checked == nil || checked.Len() != 0 {
+				t.Fatalf("NewExactIndexChecked(%d) returned non-empty index", dims)
+			}
+			if report.InputRows != 3 || report.IndexedRows != 0 || report.DimensionMismatch != 2 || report.SkippedBadSpan != 1 {
+				t.Fatalf("report = %+v, want input=3 indexed=0 dimension_mismatch=2 bad_span=1", report)
+			}
+		})
+	}
+}
+
 func TestNewExactIndexCheckedRejectsOverflowSpan(t *testing.T) {
 	t.Parallel()
 
@@ -198,6 +263,75 @@ func TestNewExactIndexCheckedRejectsOverflowSpan(t *testing.T) {
 	}
 	if results, ok := idx.Search([]float32{1}, 10, -1); ok || len(results) != 0 {
 		t.Fatalf("Search() = (%+v, %v), want empty false", results, ok)
+	}
+}
+
+func TestNewExactIndexCheckedRetainsFirstValidDuplicateKey(t *testing.T) {
+	t.Parallel()
+
+	arena := append(EncodeFloat32Vec([]float32{1, 0}), EncodeFloat32Vec([]float32{0, 1})...)
+	idx, report := NewExactIndexChecked(2, []IndexChunk{
+		{Group: "same", ChunkIndex: 0, Offset: len(arena), Length: 8},
+		{Group: "same", ChunkIndex: 0, Offset: 0, Length: 8},
+		{Group: "same", ChunkIndex: 0, Offset: 8, Length: 8},
+	}, arena)
+
+	if report.InputRows != 3 || report.IndexedRows != 1 || report.SkippedBadSpan != 1 || report.SkippedDuplicateKey != 1 {
+		t.Fatalf("report = %+v, want input=3 indexed=1 bad_span=1 duplicate_key=1", report)
+	}
+	if idx.Len() != 1 {
+		t.Fatalf("Len() = %d, want 1", idx.Len())
+	}
+	results, ok := idx.SearchKeys([]float32{1, 0}, 1, -1, []IndexKey{{Group: "same", ChunkIndex: 0}})
+	if !ok || len(results) != 1 {
+		t.Fatalf("SearchKeys() = (%+v, %v), want one result", results, ok)
+	}
+	assertInDelta(t, results[0].Score, 1, 0)
+}
+
+func TestExactIndexConstructorsSnapshotArena(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		new        func(int, []IndexChunk, []byte) (*ExactIndex, IndexBuildReport)
+		wantReport bool
+	}{
+		{
+			name: "NewExactIndex",
+			new: func(dims int, chunks []IndexChunk, arena []byte) (*ExactIndex, IndexBuildReport) {
+				return NewExactIndex(dims, chunks, arena), IndexBuildReport{}
+			},
+		},
+		{
+			name:       "NewExactIndexChecked",
+			new:        NewExactIndexChecked,
+			wantReport: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			arena := append(EncodeFloat32Vec([]float32{42}), EncodeFloat32Vec([]float32{1, 0})...)
+			idx, report := tt.new(2, []IndexChunk{{Group: "original", Offset: 4, Length: 8}}, arena)
+			if tt.wantReport && report.IndexedRows != 1 {
+				t.Fatalf("IndexedRows = %d, want 1", report.IndexedRows)
+			}
+
+			clear(arena)
+			arena = nil
+
+			results, ok := idx.Search([]float32{1, 0}, 1, -1)
+			if !ok || len(results) != 1 {
+				t.Fatalf("Search() = (%+v, %v), want one result", results, ok)
+			}
+			if results[0].Group != "original" {
+				t.Fatalf("Search()[0].Group = %q, want original", results[0].Group)
+			}
+			assertInDelta(t, results[0].Score, 1, 0)
+		})
 	}
 }
 
@@ -234,6 +368,121 @@ func TestExactIndex_SearchKeys(t *testing.T) {
 	if results[1].Group != "b" || results[1].ChunkIndex != 0 {
 		t.Fatalf("SearchKeys[1] = %+v, want b/0", results[1])
 	}
+}
+
+func TestExactIndexSearchesRejectInvalidQueryDimensions(t *testing.T) {
+	t.Parallel()
+
+	arena := EncodeFloat32Vec([]float32{1, 0})
+	idx := NewExactIndex(2, []IndexChunk{{Group: "a", ChunkIndex: 0, Offset: 0, Length: 8}}, arena)
+
+	tests := []struct {
+		name   string
+		search func([]float32) ([]SearchResult, bool)
+	}{
+		{name: "Search", search: func(query []float32) ([]SearchResult, bool) {
+			return idx.Search(query, 10, -1)
+		}},
+		{name: "SearchFiltered", search: func(query []float32) ([]SearchResult, bool) {
+			return idx.SearchFiltered(query, 10, -1, []string{"a"})
+		}},
+		{name: "SearchKeys", search: func(query []float32) ([]SearchResult, bool) {
+			return idx.SearchKeys(query, 10, -1, []IndexKey{{Group: "a", ChunkIndex: 0}})
+		}},
+		{name: "SearchGroupsByMaxPool", search: func(query []float32) ([]SearchResult, bool) {
+			return idx.SearchGroupsByMaxPool(query, 10)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			queries := []struct {
+				name  string
+				value []float32
+			}{
+				{name: "short", value: []float32{1}},
+				{name: "long", value: []float32{1, 0, 0}},
+				{name: "nan", value: []float32{float32(math.NaN()), 0}},
+				{name: "positive-inf", value: []float32{float32(math.Inf(1)), 0}},
+				{name: "negative-inf", value: []float32{float32(math.Inf(-1)), 0}},
+			}
+			for _, query := range queries {
+				results, ok := tt.search(query.value)
+				if results != nil || ok {
+					t.Fatalf("search(%s) = (%v, %v), want (nil, false)", query.name, results, ok)
+				}
+			}
+		})
+	}
+}
+
+func TestExactIndexSearchesOrderEqualScoresDeterministically(t *testing.T) {
+	t.Parallel()
+
+	vector := EncodeFloat32Vec([]float32{1, 0})
+	arena := make([]byte, 0, len(vector)*4)
+	chunks := []IndexChunk{
+		{Group: "z", ChunkIndex: 1},
+		{Group: "a", ChunkIndex: 2},
+		{Group: "b", ChunkIndex: 0},
+		{Group: "a", ChunkIndex: 0},
+	}
+	for i := range chunks {
+		chunks[i].Offset = len(arena)
+		chunks[i].Length = len(vector)
+		arena = append(arena, vector...)
+	}
+	idx := NewExactIndex(2, chunks, arena)
+
+	wantChunks := []IndexKey{
+		{Group: "a", ChunkIndex: 0},
+		{Group: "a", ChunkIndex: 2},
+		{Group: "b", ChunkIndex: 0},
+	}
+	chunkSearches := []struct {
+		name   string
+		search func() ([]SearchResult, bool)
+	}{
+		{name: "Search", search: func() ([]SearchResult, bool) {
+			return idx.Search([]float32{1, 0}, 3, -1)
+		}},
+		{name: "SearchFiltered", search: func() ([]SearchResult, bool) {
+			return idx.SearchFiltered([]float32{1, 0}, 3, -1, []string{"z", "b", "a"})
+		}},
+		{name: "SearchKeys", search: func() ([]SearchResult, bool) {
+			return idx.SearchKeys([]float32{1, 0}, 3, -1, []IndexKey{
+				{Group: "z", ChunkIndex: 1},
+				{Group: "b", ChunkIndex: 0},
+				{Group: "a", ChunkIndex: 2},
+				{Group: "a", ChunkIndex: 0},
+			})
+		}},
+	}
+	for _, tt := range chunkSearches {
+		t.Run(tt.name, func(t *testing.T) {
+			for range 20 {
+				got, ok := tt.search()
+				if !ok || len(got) != len(wantChunks) {
+					t.Fatalf("search = (%+v, %v), want %d results", got, ok, len(wantChunks))
+				}
+				for i, want := range wantChunks {
+					if got[i].Group != want.Group || got[i].ChunkIndex != want.ChunkIndex {
+						t.Fatalf("result %d = %+v, want %+v", i, got[i], want)
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("SearchGroupsByMaxPool", func(t *testing.T) {
+		for range 20 {
+			got, ok := idx.SearchGroupsByMaxPool([]float32{1, 0}, 2)
+			if !ok || len(got) != 2 || got[0].Group != "a" || got[1].Group != "b" {
+				t.Fatalf("SearchGroupsByMaxPool = (%+v, %v), want groups [a b]", got, ok)
+			}
+		}
+	})
 }
 
 func assertInDelta(t *testing.T, got, want, delta float64) {

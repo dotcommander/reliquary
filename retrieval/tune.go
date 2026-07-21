@@ -116,7 +116,12 @@ func evaluateTuneConfig(cases []TuneCase, weights Weights, k int, lambda float64
 
 func rankTuneCandidates(candidates []TuneCandidate, weights Weights, k int, lambda float64, useMMR bool) []RankedResult {
 	items := make([]MMRItem, 0, len(candidates))
+	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
+		if _, exists := seen[candidate.ID]; exists {
+			continue
+		}
+		seen[candidate.ID] = struct{}{}
 		items = append(items, MMRItem{
 			ID:        candidate.ID,
 			Score:     weightedSignals(candidate.Signals, weights),

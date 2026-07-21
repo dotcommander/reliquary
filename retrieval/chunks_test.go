@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/dotcommander/reliquary/chunking"
@@ -128,6 +129,16 @@ func TestResultsFromDocuments(t *testing.T) {
 	}
 	if results[0].ID != "doc#0" || results[0].Filename != "doc.md" || results[0].Content == "" {
 		t.Fatalf("unexpected result: %+v", results[0])
+	}
+}
+
+func TestResultsFromDocumentsRejectsInvalidIDs(t *testing.T) {
+	t.Parallel()
+	if _, err := ResultsFromDocuments([]document.Document{{ID: " ", Text: "content"}}, chunking.SmartBoundary, 80, 0); !errors.Is(err, ErrInvalidDocumentID) {
+		t.Fatalf("blank ID error = %v, want ErrInvalidDocumentID", err)
+	}
+	if _, err := ResultsFromDocuments([]document.Document{{ID: "same", Text: "one"}, {ID: "same", Text: "two"}}, chunking.SmartBoundary, 80, 0); !errors.Is(err, ErrDuplicateDocumentID) {
+		t.Fatalf("duplicate ID error = %v, want ErrDuplicateDocumentID", err)
 	}
 }
 

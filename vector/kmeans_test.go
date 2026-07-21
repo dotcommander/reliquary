@@ -85,6 +85,18 @@ func TestKMeans_InvalidInputsDoNotPanic(t *testing.T) {
 			k:      2,
 			rng:    rand.New(rand.NewSource(1)),
 		},
+		{
+			name:   "NaN returns empty result",
+			points: [][]float32{{1, 0}, {float32(math.NaN()), 1}},
+			k:      2,
+			rng:    rand.New(rand.NewSource(1)),
+		},
+		{
+			name:   "infinity returns empty result",
+			points: [][]float32{{1, 0}, {0, float32(math.Inf(1))}},
+			k:      2,
+			rng:    rand.New(rand.NewSource(1)),
+		},
 	}
 
 	for _, tc := range cases {

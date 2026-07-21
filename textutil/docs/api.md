@@ -45,7 +45,7 @@ Configure extraction behavior with `KeywordOptions`:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `Limit` | `int` | `10` | Maximum number of keywords to return. |
-| `MinLength` | `int` | `4` | Minimum character length a token must have after normalization. |
+| `MinLength` | `int` | `4` | Minimum Unicode rune count a token must have after normalization. |
 | `MinCount` | `int` | `0` | Minimum number of occurrences a token must appear across all texts. A value of `0` means no minimum (every token that appears at least once qualifies). |
 | `StopWords` | `map[string]struct{}` | `nil` | Optional per-call stop-word set layered on top of the package defaults. Use this for domain words without mutating global state. |
 | `Include` | `func(string) bool` | `nil` | Optional predicate applied after stop-word and length filtering. Return `false` to exclude a token. `nil` accepts all. |
@@ -94,6 +94,11 @@ Themes are sorted alphabetically before scoring, so when two themes reach the sa
 
 `AliasQueryScore` scores a query against a canonical phrase and optional aliases. It is tuned for person-name style matching, not arbitrary code-symbol or substring search. It returns an `AliasMatch` with a numeric score and a `MatchReason` explaining the best match.
 
+Token coverage is one-to-one: one query token cannot satisfy multiple target
+tokens. Exact matches are reserved first, then the matcher finds the maximum
+number of distinct fuzzy matches. Reordering distinct boundary terms does not
+reduce coverage.
+
 ```go
 match := textutil.AliasQueryScore(
 	"father of Jordan Morgan",
@@ -126,14 +131,14 @@ if match.Score >= textutil.PersonAliasMinScore {
 
 ### phrase-and-text-terms
 
-`PhraseTerms` lowercases text, splits on non-letter/non-digit runes, drops one-character terms, and applies an optional `StopTermFunc`.
+`PhraseTerms` lowercases text, splits on non-letter/non-digit runes, drops terms shorter than two Unicode runes, and applies an optional `StopTermFunc`.
 
 ```go
 terms := textutil.PhraseTerms("Parent of Jordan Morgan", textutil.IsStopWord)
 // → []string{"parent", "jordan", "morgan"}
 ```
 
-`TextTerms` lowercases text, splits on non-letter/non-digit runes, keeps unique terms of length four or greater, and preserves first-seen order. `LongTermNearMatch` checks whether a long term has a bounded fuzzy match inside a `TextTerms` result.
+`TextTerms` lowercases text, splits on non-letter/non-digit runes, keeps unique terms of four or more Unicode runes, and preserves first-seen order. `LongTermNearMatch` checks whether a long term has a bounded fuzzy match inside a `TextTerms` result; its length thresholds also count runes rather than UTF-8 bytes.
 
 ```go
 terms := textutil.TextTerms("Jordan Morgan research notes")

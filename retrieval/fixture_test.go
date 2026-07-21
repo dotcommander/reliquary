@@ -206,6 +206,46 @@ func TestValidateRunRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestValidateRunRejectsBlankAndDuplicateIDsInEveryResultList(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		set  func(*RunQuery, []RankedResult)
+	}{
+		{name: "results", set: func(query *RunQuery, results []RankedResult) { query.Results = results }},
+		{name: "candidates", set: func(query *RunQuery, results []RankedResult) { query.Stages.Candidates = results }},
+		{name: "reranked", set: func(query *RunQuery, results []RankedResult) { query.Stages.Reranked = results }},
+		{name: "diversified", set: func(query *RunQuery, results []RankedResult) { query.Stages.Diversified = results }},
+		{name: "final", set: func(query *RunQuery, results []RankedResult) { query.Stages.Final = results }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, tc := range []struct {
+				name    string
+				results []RankedResult
+				want    string
+			}{
+				{name: "blank", results: []RankedResult{{ID: " \t"}}, want: "ID is required"},
+				{name: "duplicate", results: []RankedResult{{ID: "a"}, {ID: "a"}}, want: "duplicate ID"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					t.Parallel()
+					query := RunQuery{ID: "q"}
+					tt.set(&query, tc.results)
+					err := ValidateRun(Run{ID: "r", Queries: []RunQuery{query}})
+					if err == nil || !strings.Contains(err.Error(), tc.want) {
+						t.Fatalf("ValidateRun error = %v, want substring %q", err, tc.want)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestEvaluateRunErrorsOnMissingFixtureQuery(t *testing.T) {
 	t.Parallel()
 
@@ -216,6 +256,55 @@ func TestEvaluateRunErrorsOnMissingFixtureQuery(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "fixture query not found") {
 		t.Fatalf("EvaluateRun error = %v, want missing fixture query", err)
+	}
+}
+
+func TestEvaluateRunRequiresCompleteFixtureCoverage(t *testing.T) {
+	t.Parallel()
+
+	fixture := Fixture{ID: "f", Queries: []FixtureQuery{
+		{ID: "q3", Judgments: []Judgment{{DocID: "hard", Relevance: 1}}},
+		{ID: "q1", Judgments: []Judgment{{DocID: "easy", Relevance: 1}}},
+		{ID: "q2", Judgments: []Judgment{{DocID: "medium", Relevance: 1}}},
+	}}
+	tests := []struct {
+		name string
+		run  Run
+		want string
+	}{
+		{
+			name: "partial run omits hard query",
+			run:  Run{ID: "r", Queries: []RunQuery{{ID: "q1", Results: []RankedResult{{ID: "easy"}}}, {ID: "q2", Results: []RankedResult{{ID: "medium"}}}}},
+			want: "run is missing fixture queries: q3",
+		},
+		{
+			name: "empty run omits every query in lexical order",
+			run:  Run{ID: "r"},
+			want: "run is missing fixture queries: q1, q2, q3",
+		},
+		{
+			name: "multiple missing queries are ordered lexically",
+			run:  Run{ID: "r", Queries: []RunQuery{{ID: "q2", Results: []RankedResult{{ID: "medium"}}}}},
+			want: "run is missing fixture queries: q1, q3",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := EvaluateRun(fixture, tc.run, 1)
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("EvaluateRun error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	report, err := EvaluateRun(Fixture{ID: "empty"}, Run{ID: "empty"}, 1)
+	if err != nil {
+		t.Fatalf("EvaluateRun empty fixture and run returned error: %v", err)
+	}
+	if report.QueryCount != 0 {
+		t.Fatalf("EvaluateRun empty fixture and run query count = %d, want 0", report.QueryCount)
 	}
 }
 

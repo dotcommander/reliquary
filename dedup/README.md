@@ -94,6 +94,15 @@ Pass one of these to `NewDetector` (or `NewContentHasher`):
 Rule of thumb: start with `NormalizedHash` for "are these the same document?",
 reach for `SimHash` when you need "are these roughly the same?".
 
+`NormalizedHash` treats Unicode whitespace (including NBSP and EM SPACE) like
+ASCII whitespace. `SimHash` retains Unicode letters, numbers, and combining
+marks while collapsing Unicode whitespace and dropping ordinary punctuation.
+Inputs shorter than the configured shingle size contribute their complete
+normalized content as one feature; punctuation-only non-whitespace inputs use a
+distinct raw-content fallback instead of collapsing to the empty fingerprint.
+Persisted SimHash fingerprints for those previously defective cases must be
+rebuilt after upgrading; long ASCII fingerprints are unchanged.
+
 ## Stats, metadata, and ordering
 
 `Stats` returns a typed summary of the last index — total items, unique hashes,

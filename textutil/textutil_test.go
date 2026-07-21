@@ -35,6 +35,17 @@ func TestExtractKeywordsPerCallStopWords(t *testing.T) {
 	assert.False(t, IsStopWord("channels"))
 }
 
+func TestExtractKeywordsMinLengthCountsRunes(t *testing.T) {
+	t.Parallel()
+
+	keywords := ExtractKeywords([]string{"abc caf\u00e9 東京大阪"}, KeywordOptions{
+		Limit:     10,
+		MinLength: 4,
+		MinCount:  1,
+	})
+	assert.Equal(t, []string{"café", "東京大阪"}, keywords)
+}
+
 func TestMostFrequentValueWithMinimum(t *testing.T) {
 	t.Parallel()
 

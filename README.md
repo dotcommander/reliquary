@@ -38,12 +38,19 @@ func main() {
 This quickstart uses deterministic in-memory embeddings for demos and tests.
 Production applications should inject their own embedder and index with
 `New`, `WithEmbedder`, `WithIndex`, and `WithIndexIdentity`.
+Custom embedders must return exactly one finite, positive-dimension vector per
+input in the same order and should run the shared `embedding/embeddingtest`
+contract suite. Reliquary validates embedder results before mutating retrieval
+objects or accessing an index.
 
 The index identity is required for `New` and must change whenever the embedding
 space or chunking policy changes. A mismatched populated index is rejected even
 when dimensions match. To rebuild intentionally, call `app.ResetIndex(ctx)`;
 this permanently deletes every indexed chunk before re-ingestion. `Quickstart`
 and `InMemory` supply a deterministic identity for their built-in hashing setup.
+The first non-nil indexed result establishes the identity and the first embedded
+result establishes the vector dimension. Deletes and replacements preserve that
+space even after the index becomes empty; only `ResetIndex` clears it.
 
 Restrict candidate retrieval by reserved fields (`id`, `document_id`, or
 `filename`) or scalar metadata while retaining final reranking and MMR:
@@ -55,20 +62,47 @@ results, err := app.Search(ctx, "search text",
 )
 ```
 
+Filters use backend-independent JSON-scalar equality. Metadata keys must be
+present, explicit `nil` matches only JSON null, strings and booleans are
+type-exact, and finite numbers compare by exact JSON numeric value across Go
+numeric types. Reserved fields match strings only. NaN, infinities, and compound
+filter values are rejected before query embedding.
+
 The default index is concurrency-safe and in-memory. Use `WithIndex` to inject
 another implementation.
+
+`App.Ingest` treats each supplied document as a complete revision: all prior
+chunks for those document IDs are atomically replaced across the whole call. A
+document that produces no chunks deletes its prior revision. IDs must be
+non-blank and unique within one call; invalid batches fail before embedding.
+`Index.Upsert` remains merge-by-result-ID, while `Index.DeleteDocument` remains
+an explicit deletion operation that uses exact `Result.DocumentID` ownership;
+result ID prefixes never imply ownership. Replacement result IDs must also be
+unique and must not collide with results owned by documents outside the
+replacement batch. Index writes and searches reject NaN and infinities in
+vectors without changing the established index space; empty embeddings remain
+valid for lexical-only results.
+
+Custom indexes must implement the mandatory atomic batch method
+`ReplaceDocuments(ctx, []DocumentReplacement) error` in addition to `Upsert`,
+`DeleteDocument`, and `Search`. This is a compile-time interface change. Every
+implementation should run the shared `index/indextest` contract suite.
 
 ## Adapters
 
 - `adapter/openai` adapts an injected `openai.Client` to the embedding contract.
 - `adapter/postgres` provides bounded pgvector candidate retrieval.
 - `adapter/sqlite` provides bounded FTS5 candidate retrieval with final ranking
-  performed by Reliquary.
+  performed by Reliquary. Its configured/default candidate bound also applies
+  when `IndexQuery.Limit` is zero; positive limits are never truncated below
+  the requested count.
 
 Database constructors validate configuration and perform no migrations. Call
 the adapter's `Migrate(ctx)` method explicitly before use. Callers retain
 ownership of database pools, connections, credentials, transports, and retry
-policy.
+policy. SQLite and PostgreSQL migrations also create and legacy-backfill the
+adapter-owned index-space state table used to preserve identity and dimension
+until reset.
 
 ## Ownership
 

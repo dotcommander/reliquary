@@ -202,6 +202,50 @@ func TestEvaluateRecallMonotonicAsKIncreases(t *testing.T) {
 	}
 }
 
+func TestEvaluateCanonicalizesDuplicateResultIDsBeforeTopK(t *testing.T) {
+	t.Parallel()
+
+	query := EvalQuery{
+		ID:         "duplicates",
+		Relevant:   map[string]float64{"a": 1, "b": 1},
+		TopicByDoc: map[string]string{"b": "beta"},
+	}
+	results := []RankedResult{
+		{ID: "a", Score: 0.9, Topic: "first"},
+		{ID: "a", Score: 0.8, Topic: "beta"},
+		{ID: "b", Score: 0.7},
+	}
+
+	got := Evaluate(query, results, 2)
+	approxEqual(t, "RecallAtK", got.RecallAtK, 1)
+	approxEqual(t, "PrecisionAtK", got.PrecisionAtK, 1)
+	approxEqual(t, "MRR", got.MRR, 1)
+	approxEqual(t, "NDCGAtK", got.NDCGAtK, 1)
+	if got.UniqueTopicAtK != 2 {
+		t.Fatalf("UniqueTopicAtK = %d, want 2 from first a occurrence and b", got.UniqueTopicAtK)
+	}
+
+	lowN := Evaluate(query, results[:2], 3)
+	approxEqual(t, "low-N PrecisionAtK", lowN.PrecisionAtK, 1.0/3.0)
+}
+
+func TestEvaluateLayersAndSegmentsCanonicalizeDuplicateResultIDs(t *testing.T) {
+	t.Parallel()
+
+	query := EvalQuery{ID: "duplicates", Relevant: map[string]float64{"a": 1, "b": 1}}
+	results := []RankedResult{{ID: "a"}, {ID: "a"}, {ID: "b"}}
+	layers := EvaluateLayers(query, LayeredResults{Candidates: results}, 2)
+	if layers.CandidateCount != 2 || layers.CandidateHitCount != 2 {
+		t.Fatalf("candidate count/hits = %d/%d, want 2/2", layers.CandidateCount, layers.CandidateHitCount)
+	}
+	approxEqual(t, "CandidateRecall", layers.CandidateRecall, 1)
+
+	segments := EvaluateSegments(query, results, 2, func(string) string { return "all" })
+	if len(segments) != 1 || segments[0].ResultCount != 2 || segments[0].HitCount != 2 {
+		t.Fatalf("segments = %+v, want one segment with 2 results and 2 hits", segments)
+	}
+}
+
 func TestEvaluateLayersLocalizesRetrievalStages(t *testing.T) {
 	t.Parallel()
 

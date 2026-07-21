@@ -1,6 +1,8 @@
 package clustering
 
 import (
+	"math"
+	"strings"
 	"testing"
 )
 
@@ -122,6 +124,38 @@ func TestServiceEmpty(t *testing.T) {
 
 	if result.K != 0 {
 		t.Errorf("expected K=0 for empty input, got K=%d", result.K)
+	}
+}
+
+func TestServiceRejectsMalformedEmbeddingsForEveryAlgorithm(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		embeddings [][]float64
+		wantError  string
+	}{
+		{name: "zero-dimensional", embeddings: [][]float64{{}}, wantError: "embedding 0 has zero dimensions"},
+		{name: "ragged", embeddings: [][]float64{{1, 0}, {1}}, wantError: "embedding 1 has dimension 1, want 2"},
+		{name: "nan", embeddings: [][]float64{{1, math.NaN()}}, wantError: "embedding 0 value 1 is non-finite"},
+		{name: "positive infinity", embeddings: [][]float64{{math.Inf(1), 0}}, wantError: "embedding 0 value 0 is non-finite"},
+		{name: "negative infinity", embeddings: [][]float64{{math.Inf(-1), 0}}, wantError: "embedding 0 value 0 is non-finite"},
+	}
+	for _, algorithm := range []string{"greedy", "kmeans", "hac"} {
+		algorithm := algorithm
+		for _, tc := range cases {
+			tc := tc
+			t.Run(algorithm+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				result, err := NewClusterService(algorithm).Cluster(tc.embeddings, ClusterOptions{K: 2})
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Fatalf("Cluster() error = %v, want containing %q", err, tc.wantError)
+				}
+				if result != nil {
+					t.Fatalf("Cluster() result = %#v, want nil", result)
+				}
+			})
+		}
 	}
 }
 

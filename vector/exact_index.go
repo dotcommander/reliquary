@@ -34,6 +34,7 @@ type IndexBuildReport struct {
 	SkippedBadSpan         int
 	SkippedBadBlob         int
 	SkippedMissingMetadata int
+	SkippedDuplicateKey    int
 	DimensionMismatch      int
 	MedianError            string
 	QuantizeError          string
@@ -48,7 +49,7 @@ type scoredItem struct {
 type minScoredHeap []scoredItem
 
 func (h minScoredHeap) Len() int           { return len(h) }
-func (h minScoredHeap) Less(i, j int) bool { return h[i].score < h[j].score }
+func (h minScoredHeap) Less(i, j int) bool { return scoredItemBetter(h[j], h[i]) }
 func (h minScoredHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h *minScoredHeap) Push(x any)        { *h = append(*h, x.(scoredItem)) }
 func (h *minScoredHeap) Pop() any {
@@ -57,6 +58,18 @@ func (h *minScoredHeap) Pop() any {
 	x := old[n-1]
 	*h = old[:n-1]
 	return x
+}
+
+// scoredItemBetter defines the result order used both while retaining the
+// top-K cutoff and when returning results.
+func scoredItemBetter(a, b scoredItem) bool {
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if a.group != b.group {
+		return a.group < b.group
+	}
+	return a.chunkIndex < b.chunkIndex
 }
 
 // ExactIndex is a thread-safe, in-memory flat vector index.
@@ -71,34 +84,49 @@ type ExactIndex struct {
 	chunkKeyIndexes   map[IndexKey]int
 }
 
-// NewExactIndex constructs an ExactIndex.
+// NewExactIndex constructs an ExactIndex. It snapshots arena, so callers may
+// mutate or release their slice after this function returns.
 func NewExactIndex(dims int, chunks []IndexChunk, arena []byte) *ExactIndex {
 	idx, _ := NewExactIndexChecked(dims, chunks, arena)
 	return idx
 }
 
-// NewExactIndexChecked constructs an ExactIndex and reports skipped or suspicious rows.
+// NewExactIndexChecked constructs an ExactIndex and reports skipped or
+// suspicious rows. Rows containing non-finite vector values are skipped and
+// counted in SkippedBadBlob. It snapshots arena, so callers may mutate or
+// release their slice after this function returns.
 func NewExactIndexChecked(dims int, chunks []IndexChunk, arena []byte) (*ExactIndex, IndexBuildReport) {
 	report := IndexBuildReport{InputRows: len(chunks)}
 
 	// Drop chunks whose arena span is out of bounds so Search paths cannot panic.
 	valid := make([]IndexChunk, 0, len(chunks))
+	seenKeys := make(map[IndexKey]struct{}, len(chunks))
 	for _, c := range chunks {
 		if !validArenaSpan(c, len(arena)) {
 			report.SkippedBadSpan++
 			continue
 		}
-		if dims > 0 && c.Length != dims*4 {
+		if dims <= 0 || c.Length != dims*4 {
 			report.DimensionMismatch++
 			continue
 		}
+		if !finiteFloat32Blob(arena[c.Offset : c.Offset+c.Length]) {
+			report.SkippedBadBlob++
+			continue
+		}
+		key := IndexKey{Group: c.Group, ChunkIndex: c.ChunkIndex}
+		if _, exists := seenKeys[key]; exists {
+			report.SkippedDuplicateKey++
+			continue
+		}
+		seenKeys[key] = struct{}{}
 		valid = append(valid, c)
 	}
 
 	idx := &ExactIndex{
 		dims:              dims,
 		chunks:            valid,
-		arena:             arena,
+		arena:             slices.Clone(arena),
 		groupChunkIndexes: make(map[string][]int),
 		chunkKeyIndexes:   make(map[IndexKey]int),
 	}
@@ -150,11 +178,14 @@ func (idx *ExactIndex) prepareSearch(limit int) (int, bool) {
 }
 
 // Search scores all vectors against the query and returns the top-K matches.
-// Returns false if the index is empty.
+// Returns false if the index is empty or the query is invalid.
 func (idx *ExactIndex) Search(queryVec []float32, limit int, minSimilarity float64) ([]SearchResult, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	if len(queryVec) != idx.dims || !finiteFloat32s(queryVec) {
+		return nil, false
+	}
 	limit, ok := idx.prepareSearch(limit)
 	if !ok {
 		return nil, false
@@ -168,7 +199,7 @@ func (idx *ExactIndex) Search(queryVec []float32, limit int, minSimilarity float
 }
 
 // SearchFiltered scores only vectors belonging to the specified groups.
-// Returns false if the index is empty.
+// Returns false if the index is empty or the query is invalid.
 func (idx *ExactIndex) SearchFiltered(
 	queryVec []float32,
 	limit int,
@@ -178,6 +209,9 @@ func (idx *ExactIndex) SearchFiltered(
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	if len(queryVec) != idx.dims || !finiteFloat32s(queryVec) {
+		return nil, false
+	}
 	limit, ok := idx.prepareSearch(limit)
 	if !ok {
 		return nil, false
@@ -207,7 +241,8 @@ func (idx *ExactIndex) SearchFiltered(
 }
 
 // SearchKeys scores only the chunks identified by keys. Duplicate and missing
-// keys are ignored. Returns false if the index is empty.
+// keys are ignored. Returns false if the index is empty or the query is
+// invalid.
 func (idx *ExactIndex) SearchKeys(
 	queryVec []float32,
 	limit int,
@@ -217,6 +252,9 @@ func (idx *ExactIndex) SearchKeys(
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	if len(queryVec) != idx.dims || !finiteFloat32s(queryVec) {
+		return nil, false
+	}
 	limit, ok := idx.prepareSearch(limit)
 	if !ok {
 		return nil, false
@@ -246,11 +284,15 @@ func (idx *ExactIndex) SearchKeys(
 }
 
 // SearchGroupsByMaxPool pools the best similarity score per group across all
-// chunks and returns the top-K best matching groups.
+// chunks and returns the top-K best matching groups. Returns false if the index
+// is empty or the query is invalid.
 func (idx *ExactIndex) SearchGroupsByMaxPool(queryVec []float32, limit int) ([]SearchResult, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	if len(queryVec) != idx.dims || !finiteFloat32s(queryVec) {
+		return nil, false
+	}
 	limit, ok := idx.prepareSearch(limit)
 	if !ok {
 		return nil, false
@@ -275,7 +317,7 @@ func (idx *ExactIndex) SearchGroupsByMaxPool(queryVec []float32, limit int) ([]S
 		item := scoredItem{group: group, score: b.score, chunkIndex: -1}
 		if h.Len() < limit {
 			heap.Push(h, item)
-		} else if b.score > (*h)[0].score {
+		} else if scoredItemBetter(item, (*h)[0]) {
 			(*h)[0] = item
 			heap.Fix(h, 0)
 		}
@@ -299,7 +341,7 @@ func (idx *ExactIndex) scoreChunk(
 	item := scoredItem{group: c.Group, chunkIndex: c.ChunkIndex, score: score}
 	if h.Len() < limit {
 		heap.Push(h, item)
-	} else if score > (*h)[0].score {
+	} else if scoredItemBetter(item, (*h)[0]) {
 		(*h)[0] = item
 		heap.Fix(h, 0)
 	}
@@ -307,12 +349,21 @@ func (idx *ExactIndex) scoreChunk(
 
 func heapToResults(h *minScoredHeap) []SearchResult {
 	top := make([]scoredItem, h.Len())
-	for i := len(top) - 1; i >= 0; i-- {
+	for i := range top {
 		top[i] = heap.Pop(h).(scoredItem)
 	}
 	if len(top) == 0 {
 		return nil
 	}
+	slices.SortFunc(top, func(a, b scoredItem) int {
+		if scoredItemBetter(a, b) {
+			return -1
+		}
+		if scoredItemBetter(b, a) {
+			return 1
+		}
+		return 0
+	})
 
 	results := make([]SearchResult, len(top))
 	for i, c := range top {

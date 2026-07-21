@@ -3,6 +3,7 @@ package textutil
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -51,7 +52,7 @@ func PhraseTerms(s string, stop StopTermFunc) []string {
 	for _, raw := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	}) {
-		if len(raw) < 2 || (stop != nil && stop(raw)) {
+		if utf8.RuneCountInString(raw) < 2 || (stop != nil && stop(raw)) {
 			continue
 		}
 		terms = append(terms, raw)
@@ -65,7 +66,7 @@ func TextTerms(text string) []string {
 	for _, raw := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
 	}) {
-		if len(raw) < 4 {
+		if utf8.RuneCountInString(raw) < 4 {
 			continue
 		}
 		if _, ok := seen[raw]; ok {
@@ -79,7 +80,7 @@ func TextTerms(text string) []string {
 
 func LongTermNearMatch(term string, textTerms []string) bool {
 	term = strings.TrimSuffix(strings.ToLower(term), "s")
-	if len(term) < LongTermMinLen {
+	if utf8.RuneCountInString(term) < LongTermMinLen {
 		return false
 	}
 	maxDistance := LongTermShortMaxDistance
@@ -88,7 +89,7 @@ func LongTermNearMatch(term string, textTerms []string) bool {
 	}
 	for _, candidate := range textTerms {
 		candidate = strings.TrimSuffix(candidate, "s")
-		if len(candidate) < LongTermMinLen || absInt(len([]rune(term))-len([]rune(candidate))) > maxDistance {
+		if utf8.RuneCountInString(candidate) < LongTermMinLen || absInt(len([]rune(term))-len([]rune(candidate))) > maxDistance {
 			continue
 		}
 		if boundedEditDistance([]rune(term), []rune(candidate), maxDistance) <= maxDistance {
@@ -162,39 +163,75 @@ func boundaryNameCoverage(queryTerms, targetTerms []string) bool {
 	if len(queryTerms) < 2 || len(targetTerms) < 3 {
 		return false
 	}
-	first := targetTerms[0]
-	last := targetTerms[len(targetTerms)-1]
-	var firstHit, lastHit bool
-	for _, query := range queryTerms {
-		exact, fuzzy := termSimilar(query, first)
-		firstHit = firstHit || exact || fuzzy
-		exact, fuzzy = termSimilar(query, last)
-		lastHit = lastHit || exact || fuzzy
-	}
-	return firstHit && lastHit
+	hits, _ := distinctTokenMatches(queryTerms, []string{targetTerms[0], targetTerms[len(targetTerms)-1]})
+	return hits == 2
 }
 
 func termCoverage(queryTerms, targetTerms []string) (float64, bool) {
-	var hits int
-	var usedFuzzy bool
-	for _, target := range targetTerms {
-		for _, query := range queryTerms {
-			exact, fuzzy := termSimilar(query, target)
-			if exact || fuzzy {
-				hits++
-				usedFuzzy = usedFuzzy || fuzzy
-				break
+	hits, usedFuzzy := distinctTokenMatches(queryTerms, targetTerms)
+	return float64(hits) / float64(len(targetTerms)), usedFuzzy
+}
+
+// distinctTokenMatches returns a maximum one-to-one token matching. Exact
+// occurrences are reserved before fuzzy matching so a fuzzy edge cannot
+// consume the only query occurrence available for an exact target.
+func distinctTokenMatches(queryTerms, targetTerms []string) (int, bool) {
+	usedQuery := make([]bool, len(queryTerms))
+	usedTarget := make([]bool, len(targetTerms))
+	hits := 0
+	for targetIndex, target := range targetTerms {
+		for queryIndex, query := range queryTerms {
+			if usedQuery[queryIndex] || query != target {
+				continue
 			}
+			usedQuery[queryIndex] = true
+			usedTarget[targetIndex] = true
+			hits++
+			break
 		}
 	}
-	return float64(hits) / float64(len(targetTerms)), usedFuzzy
+
+	matchedTargetByQuery := make([]int, len(queryTerms))
+	for i := range matchedTargetByQuery {
+		matchedTargetByQuery[i] = -1
+	}
+	var augment func(int, []bool) bool
+	augment = func(targetIndex int, seenQuery []bool) bool {
+		for queryIndex, query := range queryTerms {
+			if usedQuery[queryIndex] || seenQuery[queryIndex] {
+				continue
+			}
+			_, fuzzy := termSimilar(query, targetTerms[targetIndex])
+			if !fuzzy {
+				continue
+			}
+			seenQuery[queryIndex] = true
+			previousTarget := matchedTargetByQuery[queryIndex]
+			if previousTarget == -1 || augment(previousTarget, seenQuery) {
+				matchedTargetByQuery[queryIndex] = targetIndex
+				return true
+			}
+		}
+		return false
+	}
+
+	fuzzyHits := 0
+	for targetIndex := range targetTerms {
+		if usedTarget[targetIndex] {
+			continue
+		}
+		if augment(targetIndex, make([]bool, len(queryTerms))) {
+			fuzzyHits++
+		}
+	}
+	return hits + fuzzyHits, fuzzyHits > 0
 }
 
 func termSimilar(a, b string) (exact, fuzzy bool) {
 	if a == b {
 		return true, false
 	}
-	if len(a) < 4 || len(b) < 4 {
+	if utf8.RuneCountInString(a) < 4 || utf8.RuneCountInString(b) < 4 {
 		return false, false
 	}
 	maxDistance := LongTermShortMaxDistance

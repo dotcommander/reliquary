@@ -2,30 +2,6 @@ package chunking
 
 import "math"
 
-// dotProduct returns the dot product of two float32 vectors.
-//
-// For L2-normalized vectors (as produced by Model2Vec and compatible embedders),
-// this equals cosine similarity. The result is in [-1, 1] when both inputs are
-// unit vectors.
-//
-// Preconditions:
-//   - Both vectors must be L2-normalized for the result to equal cosine similarity.
-//   - Both vectors must be non-zero-magnitude; zero-magnitude inputs produce a
-//     result of 0 which is indistinguishable from orthogonal vectors.
-//     Callers must pre-filter with isZeroVector before calling dotProduct.
-//
-// Returns 0 if len(a) != len(b).
-func dotProduct(a, b []float32) float64 {
-	if len(a) != len(b) || len(a) == 0 {
-		return 0
-	}
-	var dot float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-	}
-	return dot
-}
-
 // meanStddev computes the mean and population standard deviation of a slice.
 func meanStddev(vals []float64) (float64, float64) {
 	if len(vals) == 0 {

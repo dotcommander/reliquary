@@ -25,7 +25,7 @@ Cosine similarity between two float32 vectors. Accumulates in float64 to reduce 
 
 ### `Cosine64(a, b []float64) float64`
 
-float64 twin of `Cosine32`. Returns `0` on length mismatch or zero-magnitude input.
+float64 twin of `Cosine32`. Uses scaled accumulation to avoid overflow and underflow for finite inputs. Returns `0` on length mismatch or zero-magnitude input.
 
 ### `CosineDistance32(a, b []float32) float32`
 
@@ -53,15 +53,15 @@ L2 distance between two float64 vectors. Returns `math.Inf(1)` if either vector 
 
 ### `Normalize32(v []float32) float32`
 
-L2-normalizes `v` in place. Returns the original magnitude. Zero-magnitude input is left unchanged, returns `0`.
+L2-normalizes `v` in place using scaled accumulation so extreme finite values remain normalizable. Returns the original magnitude, which may be `+Inf` when the mathematical magnitude exceeds the float32 range. Zero-magnitude input is left unchanged and returns `0`.
 
 ### `Normalize64(v []float64) float64`
 
-float64 twin of `Normalize32`.
+float64 twin of `Normalize32`. Its returned magnitude may similarly be `+Inf` when the mathematical result exceeds the float64 range.
 
 ### `NormalizeTo32(v []float32) []float32`
 
-Returns a new L2-normalized copy of `v` without mutating the input. If `v` has zero magnitude, returns the input slice unchanged (identity preserved, not a fresh zero slice).
+Returns a new L2-normalized copy of `v` without mutating the input. Uses scaled accumulation so extreme finite values remain normalizable. If `v` has zero magnitude, returns the input slice unchanged (identity preserved, not a fresh zero slice).
 
 ### `NormalizeTo64(v []float64) []float64`
 
@@ -190,7 +190,7 @@ Decodes a slice of float32 blobs preserving input order (`out[i]` corresponds to
 
 ### `DotFromBlob(query []float32, blob []byte) float32`
 
-Computes the dot product between a pre-normalized query vector and a raw little-endian float32 BLOB without allocating an intermediate slice. **Both operands must be L2-normalized**: under that invariant, dot product equals cosine similarity. Returns `0` if dimensions do not match.
+Computes the dot product between a pre-normalized query vector and a raw little-endian float32 BLOB without allocating an intermediate slice. **Both operands must be L2-normalized and contain only finite values**: under that invariant, dot product equals cosine similarity. This is a low-level precondition-based primitive; non-finite inputs may produce non-finite scores. Returns `0` if dimensions do not match.
 
 ### `type ScoredIndex struct`
 
@@ -203,7 +203,7 @@ type ScoredIndex struct {
 
 ### `TopKFromBlob(query []float32, blobs [][]byte, limit int, minScore float32) []ScoredIndex`
 
-Scores raw little-endian float32 blobs against `query` and returns the top input indexes. Invalid or dimension-mismatched blobs are skipped. Equal scores are ordered by ascending input index. Returns an empty slice for empty queries, empty blob lists, or `limit <= 0`.
+Scores raw little-endian float32 blobs against `query` and returns the top input indexes. Invalid or dimension-mismatched blobs and blobs producing non-finite scores are skipped. Equal scores are ordered by ascending input index. Returns an empty slice for empty or non-finite queries, empty blob lists, or `limit <= 0`.
 
 ---
 
@@ -321,21 +321,22 @@ type IndexBuildReport struct {
     SkippedBadSpan         int
     SkippedBadBlob         int
     SkippedMissingMetadata int
+    SkippedDuplicateKey    int
     DimensionMismatch      int
     MedianError            string
     QuantizeError          string
 }
 ```
 
-Reports recoverable index-build problems. Fields that do not apply to an index type remain zero.
+Reports recoverable index-build problems. `SkippedBadBlob` includes encoded vectors containing NaN or infinity. Fields that do not apply to an index type remain zero.
 
 #### `NewExactIndex(dims int, chunks []IndexChunk, arena []byte) *ExactIndex`
 
-Constructs an `ExactIndex`. `arena` is a single contiguous byte slice containing all float32 vectors encoded with `EncodeFloat32Vec`; `chunks` describes each vector's position within it. Builds an internal group→range index for filtered search.
+Constructs an `ExactIndex`. `arena` is a single contiguous byte slice containing all float32 vectors encoded with `EncodeFloat32Vec`; `chunks` describes each vector's position within it. The constructor snapshots the complete arena, so the caller may mutate or release its slice after return. Builds an internal group→range index for filtered search. A non-positive `dims` value produces a non-nil empty index.
 
 #### `NewExactIndexChecked(dims int, chunks []IndexChunk, arena []byte) (*ExactIndex, IndexBuildReport)`
 
-Constructs an `ExactIndex` and returns a build report. Out-of-bounds arena spans are skipped. In-bounds rows with lengths that do not match `dims*4` are skipped and reported via `DimensionMismatch`.
+Constructs an `ExactIndex` and returns a build report. Out-of-bounds arena spans are skipped. In-bounds rows with lengths that do not match `dims*4` are skipped and reported via `DimensionMismatch`. When `dims` is non-positive, every otherwise valid row is reported via `DimensionMismatch` and the returned index is non-nil and empty. Rows containing NaN or infinity are skipped and reported via `SkippedBadBlob` before duplicate keys are reserved. For duplicate `(Group, ChunkIndex)` keys, the first valid row is retained and later valid rows are skipped and reported via `SkippedDuplicateKey`. The constructor snapshots the complete arena, so the caller may mutate or release its slice after return.
 
 #### `(*ExactIndex).Len() int`
 
@@ -347,19 +348,19 @@ Clears all internal slices and maps, releasing memory. Thread-safe.
 
 #### `(*ExactIndex).Search(queryVec []float32, limit int, minSimilarity float64) ([]SearchResult, bool)`
 
-Scores all vectors against `queryVec` and returns the top-`limit` matches. `limit ≤ 0` defaults to 10. Returns `(nil, false)` when the index is empty.
+Scores all vectors against `queryVec` and returns the top-`limit` matches. `limit ≤ 0` defaults to 10. Equal scores are ordered by `Group`, then `ChunkIndex`. Returns `(nil, false)` when the index is empty or the query has the wrong dimension or contains NaN or infinity.
 
 #### `(*ExactIndex).SearchFiltered(queryVec []float32, limit int, minSimilarity float64, groups []string) ([]SearchResult, bool)`
 
-Scores only vectors belonging to the specified groups. Returns `(nil, false)` when the index is empty; returns `(nil, true)` when none of the groups exist.
+Scores only vectors belonging to the specified groups. Equal scores are ordered by `Group`, then `ChunkIndex`. Returns `(nil, false)` when the index is empty or the query has the wrong dimension or contains NaN or infinity; returns `(nil, true)` when none of the groups exist.
 
 #### `(*ExactIndex).SearchKeys(queryVec []float32, limit int, minSimilarity float64, keys []IndexKey) ([]SearchResult, bool)`
 
-Scores only chunks matching the supplied keys. Duplicate and missing keys are ignored. This is the preferred exact rerank primitive for two-stage pipelines where `BinaryIndex.SearchCandidates` has already produced candidate `(Group, ChunkIndex)` pairs.
+Scores only chunks matching the supplied keys. Duplicate and missing keys are ignored. Equal scores are ordered by `Group`, then `ChunkIndex`. Returns `(nil, false)` when the index is empty or the query has the wrong dimension or contains NaN or infinity. This is the preferred exact rerank primitive for two-stage pipelines where `BinaryIndex.SearchCandidates` has already produced candidate `(Group, ChunkIndex)` pairs.
 
 #### `(*ExactIndex).SearchGroupsByMaxPool(queryVec []float32, limit int) ([]SearchResult, bool)`
 
-Pools the best similarity score per group across all chunks and returns the top-`limit` best matching groups. `ChunkIndex` is `-1` in results (group-level, not chunk-level). Returns `(nil, false)` when the index is empty.
+Pools the best similarity score per group across all chunks and returns the top-`limit` best matching groups. `ChunkIndex` is `-1` in results (group-level, not chunk-level), and equal scores are ordered by `Group`. Returns `(nil, false)` when the index is empty or the query has the wrong dimension or contains NaN or infinity.
 
 ---
 
@@ -399,19 +400,19 @@ type HammingCandidate struct {
 
 #### `NewBinaryIndex(blobs [][]byte, groups []string, chunkIndices []int, dims int) *BinaryIndex`
 
-Builds a `BinaryIndex` from raw little-endian float32 blobs. Decodes each blob, computes per-dimension medians across all vectors, then binary-quantizes every vector. Blobs with invalid lengths, dimension mismatches, and rows missing group/chunk metadata are skipped. Returns an empty index if no valid rows are provided.
+Builds a `BinaryIndex` from raw little-endian float32 blobs. Decodes each blob, computes per-dimension medians across all vectors, then binary-quantizes every vector. Blobs with invalid lengths, NaN or infinity, dimension mismatches, and rows missing group/chunk metadata are skipped. Duplicate `(Group, ChunkIndex)` keys retain the first valid row. Returns an empty index if no valid rows are provided.
 
 #### `NewBinaryIndexChecked(blobs [][]byte, groups []string, chunkIndices []int, dims int) (*BinaryIndex, IndexBuildReport)`
 
-Builds a `BinaryIndex` and returns a report with skipped blob, missing metadata, dimension mismatch, median, and quantization counters/errors.
+Builds a `BinaryIndex` and returns a report with skipped blob, missing metadata, duplicate key, dimension mismatch, median, and quantization counters/errors. Rows are validated before reserving their key, so an invalid row does not suppress a later valid row with the same key.
 
 #### `(*BinaryIndex).SearchCandidates(queryVec []float32) ([]HammingCandidate, bool)`
 
-Quantizes `queryVec` using the stored medians and returns the top-100 candidates by ascending Hamming distance. This is a compatibility wrapper around `SearchCandidatesLimit(queryVec, 100)`. Returns `(nil, false)` when the index is empty or quantization fails.
+Quantizes `queryVec` using the stored medians and returns the top-100 candidates by ascending Hamming distance. This is a compatibility wrapper around `SearchCandidatesLimit(queryVec, 100)`. Returns `(nil, false)` when the index is empty, the query contains NaN or infinity, or quantization fails.
 
 #### `(*BinaryIndex).SearchCandidatesLimit(queryVec []float32, limit int) ([]HammingCandidate, bool)`
 
-Quantizes `queryVec` using the stored medians and returns up to `limit` candidates by ascending Hamming distance. `limit` is clamped to the index size; `limit ≤ 0` returns an empty candidate slice for a valid query. Returns `(nil, false)` when the index is empty or quantization fails. Equal Hamming distances are ordered by group, then chunk index, so cutoff ties are deterministic.
+Quantizes `queryVec` using the stored medians and returns up to `limit` candidates by ascending Hamming distance. `limit` is clamped to the index size; `limit ≤ 0` returns an empty candidate slice for a valid query. Returns `(nil, false)` when the index is empty, the query contains NaN or infinity, or quantization fails. Equal Hamming distances are ordered by group, then chunk index, so cutoff ties are deterministic.
 
 #### `(*BinaryIndex).Len() int`
 
@@ -474,9 +475,11 @@ Returns the index at which the smoothed curvature (`|d²/di²|` of the Gaussian-
 
 ## in-package clustering (float32)
 
-These functions cluster float32 embeddings directly. For float64 embeddings, use the `clustering` sub-package.
+These functions cluster float32 embeddings directly. For new float64 workflows,
+use the `clustering` sub-package; the root package also retains the compatibility
+API documented below.
 
-**Points must be non-empty, uniform-dimensional, and L2-normalized** before passing to `KMeans` or `SilhouetteScore`.
+**Points must be non-empty, non-zero-dimensional, uniform-dimensional, finite, and L2-normalized** before passing to `KMeans` or `SilhouetteScore`.
 
 ```go
 rng := rand.New(rand.NewSource(42))
@@ -500,7 +503,7 @@ type KMeansResult struct {
 
 ### `KMeans(points [][]float32, k int, rng *rand.Rand) *KMeansResult`
 
-K-means clustering with K-means++ initialization using cosine distance (spherical K-means). `k` is clamped to `len(points)`. A nil RNG uses a deterministic fallback. Invalid point shapes return an empty result. Uses a fixed convergence tolerance of `1e-6` and a maximum of 100 iterations. Empty clusters are recovered by reinitializing from the point furthest from its assigned centroid.
+K-means clustering with K-means++ initialization using cosine distance (spherical K-means). `k` is clamped to `len(points)`. A nil RNG uses a deterministic fallback. Ragged points, zero-dimensional points, and points containing NaN or infinity return an empty result. Uses a fixed convergence tolerance of `1e-6` and a maximum of 100 iterations. Empty clusters are recovered by reinitializing from the point furthest from its assigned centroid.
 
 ### `SilhouetteScore(points [][]float32, assignments []int, k int) float64`
 
@@ -509,3 +512,28 @@ Average silhouette coefficient for the given clustering. For datasets larger tha
 ### `FindOptimalK(points [][]float32, minK, maxK int, rng *rand.Rand) (int, float64)`
 
 Runs `KMeans` for each `k` in `[minK, maxK]` and returns the `k` with the highest silhouette score. Returns `(minK, score)` when all silhouette scores are equal.
+
+### `KMeans64(points [][]float64, cfg KMeans64Config) *KMeans64Result`
+
+Float64 K-means with K-means++ initialization and cosine distance. Non-positive `K`, `MaxIterations`, and `Tolerance` use defaults of 2, 100, and `1e-4`; `K` is capped at the point count. `Seed == 0` selects a deterministic seed derived from the input size and `K`. Empty, ragged, zero-dimensional, or non-finite points return an empty result with `K == 0`.
+
+```go
+type KMeans64Config struct {
+    K             int
+    MaxIterations int
+    Tolerance     float64
+    Seed          int64
+}
+
+type KMeans64Result struct {
+    Assignments []int
+    Centroids   [][]float64
+    K           int
+    Iterations  int
+    Converged   bool
+}
+```
+
+### `FindOptimalK64(points [][]float64, minK, maxK int) (bestK int, bestScore float64, assignments []int, centroids [][]float64, scores []float64, kValues []int)`
+
+Evaluates each feasible `k` with float64 K-means and silhouette scoring. Malformed points or a candidate range with no feasible `k` return `(0, 0, nil, nil, nil, nil)`. With a non-inverted candidate range, valid one- or two-point inputs preserve the legacy result: `bestK == 1`, `bestScore == 0`, all assignments are zero, `centroids == nil`, `scores == []float64{0}`, and `kValues == []int{1}`.

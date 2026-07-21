@@ -196,6 +196,98 @@ func TestSimHashDeterministic(t *testing.T) {
 	}
 }
 
+func TestNormalizedHashUnicodeWhitespace(t *testing.T) {
+	t.Parallel()
+
+	hasher := NewContentHasher(NormalizedHash)
+	plain := hasher.HashContent("Alpha Beta")
+
+	assert.Equal(t, plain, hasher.HashContent("Alpha\u00a0Beta"), "NBSP must normalize as whitespace")
+	assert.Equal(t, plain, hasher.HashContent("Alpha\u2003Beta"), "EM SPACE must normalize as whitespace")
+}
+
+func TestSimHashShortAndUnicodeContent(t *testing.T) {
+	t.Parallel()
+
+	hasher := NewContentHasher(SimHash)
+	zero := "0000000000000000"
+
+	t.Run("one and two character inputs", func(t *testing.T) {
+		a := hasher.HashContent("a")
+		b := hasher.HashContent("b")
+		ab := hasher.HashContent("ab")
+		cd := hasher.HashContent("cd")
+
+		assert.NotEqual(t, zero, a)
+		assert.NotEqual(t, zero, b)
+		assert.NotEqual(t, a, b)
+		assert.NotEqual(t, zero, ab)
+		assert.NotEqual(t, zero, cd)
+		assert.NotEqual(t, ab, cd)
+	})
+
+	t.Run("non-Latin input", func(t *testing.T) {
+		japanese := hasher.HashContent("日本語")
+		cyrillic := hasher.HashContent("русский")
+
+		assert.NotEqual(t, zero, japanese)
+		assert.NotEqual(t, zero, cyrillic)
+		assert.NotEqual(t, japanese, cyrillic)
+	})
+
+	t.Run("Unicode marks and whitespace", func(t *testing.T) {
+		withASCIIWhitespace := hasher.HashContent("Cafe\u0301 au lait")
+		withUnicodeWhitespace := hasher.HashContent("Cafe\u0301\u00a0au\u2003lait")
+		withoutCombiningMark := hasher.HashContent("Cafe au lait")
+
+		assert.Equal(t, withASCIIWhitespace, withUnicodeWhitespace)
+		assert.NotEqual(t, withASCIIWhitespace, withoutCombiningMark)
+	})
+
+	t.Run("punctuation-only input", func(t *testing.T) {
+		exclamation := hasher.HashContent("!!!")
+		question := hasher.HashContent("???")
+
+		assert.NotEqual(t, zero, exclamation)
+		assert.NotEqual(t, zero, question)
+		assert.NotEqual(t, exclamation, question)
+	})
+
+	t.Run("empty and whitespace-only input", func(t *testing.T) {
+		empty := hasher.HashContent("")
+
+		assert.Equal(t, zero, empty)
+		assert.Equal(t, empty, hasher.HashContent(" \t\n"))
+		assert.Equal(t, empty, hasher.HashContent("\u00a0\u2003"))
+	})
+
+	t.Run("shingle size larger than input", func(t *testing.T) {
+		custom := NewContentHasher(SimHash).WithSimHashOptions(10, 64)
+		first := custom.HashContent("short")
+		second := custom.HashContent("other")
+
+		assert.NotEqual(t, zero, first)
+		assert.NotEqual(t, zero, second)
+		assert.NotEqual(t, first, second)
+	})
+
+	t.Run("all shingle windows filtered", func(t *testing.T) {
+		custom := NewContentHasher(SimHash).WithSimHashOptions(2, 64)
+		first := custom.HashContent("a b")
+		second := custom.HashContent("c d")
+
+		assert.NotEqual(t, zero, first)
+		assert.NotEqual(t, zero, second)
+		assert.NotEqual(t, first, second)
+	})
+}
+
+func TestSimHashASCIIGolden(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "76b2571915730268", NewContentHasher(SimHash).HashContent("alpha"))
+}
+
 func TestFindNearDuplicatesThreshold(t *testing.T) {
 	t.Parallel()
 

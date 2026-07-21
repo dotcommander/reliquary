@@ -75,21 +75,22 @@ type Metrics struct {
 // Diversified.UniqueTopicAtK minus Rerank.UniqueTopicAtK, and
 // FinalDeltaRecallAtK is Final.RecallAtK minus CandidateMetrics.RecallAtK.
 func EvaluateLayers(query EvalQuery, layers LayeredResults, k int) LayerReport {
+	candidates := canonicalRankedResults(layers.Candidates)
 	if k <= 0 {
-		return LayerReport{RelevantCount: len(query.Relevant), CandidateCount: len(layers.Candidates)}
+		return LayerReport{RelevantCount: len(query.Relevant), CandidateCount: len(candidates)}
 	}
-	candidateMetrics := Evaluate(query, layers.Candidates, k)
+	candidateMetrics := Evaluate(query, candidates, k)
 	rerankMetrics := Evaluate(query, layers.Reranked, k)
 	diversifiedMetrics := Evaluate(query, layers.Diversified, k)
 	finalMetrics := Evaluate(query, layers.Final, k)
-	candidateHits := hitCount(query.Relevant, layers.Candidates)
+	candidateHits := hitCount(query.Relevant, candidates)
 	candidateRecall := 0.0
 	if len(query.Relevant) > 0 {
 		candidateRecall = float64(candidateHits) / float64(len(query.Relevant))
 	}
 	return LayerReport{
 		RelevantCount:       len(query.Relevant),
-		CandidateCount:      len(layers.Candidates),
+		CandidateCount:      len(candidates),
 		CandidateHitCount:   candidateHits,
 		CandidateRecall:     candidateRecall,
 		CandidateMetrics:    candidateMetrics,
@@ -109,6 +110,7 @@ func EvaluateSegments(query EvalQuery, results []RankedResult, k int, segmenter 
 	if k <= 0 || segmenter == nil {
 		return nil
 	}
+	results = canonicalRankedResults(results)
 	limit := min(k, len(results))
 	relevantBySegment := make(map[string]map[string]float64)
 	for id, relevance := range query.Relevant {
@@ -171,6 +173,7 @@ func Evaluate(query EvalQuery, results []RankedResult, k int) Metrics {
 	if k <= 0 {
 		return Metrics{}
 	}
+	results = canonicalRankedResults(results)
 	limit := min(k, len(results))
 	if len(query.Relevant) == 0 {
 		return Metrics{UniqueTopicAtK: uniqueTopics(results[:limit], query.TopicByDoc)}
@@ -251,10 +254,27 @@ func hitCount(relevant map[string]float64, results []RankedResult) int {
 		return 0
 	}
 	hits := 0
-	for _, result := range results {
+	for _, result := range canonicalRankedResults(results) {
 		if relevant[result.ID] > 0 {
 			hits++
 		}
 	}
 	return hits
+}
+
+// canonicalRankedResults retains the first occurrence of each stable result ID.
+func canonicalRankedResults(results []RankedResult) []RankedResult {
+	if len(results) == 0 {
+		return nil
+	}
+	canonical := make([]RankedResult, 0, len(results))
+	seen := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		if _, exists := seen[result.ID]; exists {
+			continue
+		}
+		seen[result.ID] = struct{}{}
+		canonical = append(canonical, result)
+	}
+	return canonical
 }

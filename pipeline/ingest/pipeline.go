@@ -33,7 +33,7 @@ func NewPipeline[Decoded, Out any](
 // and write errors abort the run because the cursor or destination state is
 // ambiguous.
 func (p *Pipeline[Decoded, Out]) Run(ctx context.Context, cursor Cursor) (Report, error) {
-	var report Report
+	report := Report{Cursor: cursor}
 	if p == nil {
 		return report, nil
 	}
@@ -45,6 +45,7 @@ func (p *Pipeline[Decoded, Out]) Run(ctx context.Context, cursor Cursor) (Report
 		if len(batch.Records) == 0 {
 			break
 		}
+		report.Read += len(batch.Records)
 
 		mapped := make([]Record[Out], 0, len(batch.Records))
 		for _, raw := range batch.Records {
@@ -64,13 +65,12 @@ func (p *Pipeline[Decoded, Out]) Run(ctx context.Context, cursor Cursor) (Report
 		}
 
 		rep, err := p.sink.Write(ctx, Batch[Out]{Records: mapped, Cursor: batch.Cursor})
-		if err != nil {
-			return report, err
-		}
-		report.Read += rep.Read
 		report.Written += rep.Written
 		report.Skipped += rep.Skipped
 		report.Errors += rep.Errors
+		if err != nil {
+			return report, err
+		}
 		report.Cursor = batch.Cursor
 
 		cursor = batch.Cursor

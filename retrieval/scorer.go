@@ -120,14 +120,18 @@ func AdaptiveWeights(queryTokenCount int) Weights {
 // ~1.0; very old asymptotes toward 0. Both arguments are in the same time
 // unit (e.g. seconds).
 //
-// Guards: age <= 0 returns 1.0 (treat future/now as fully fresh); halfLife <= 0
-// returns 1.0 (no decay configured -> no penalty).
+// Guards: NaN input returns 0.0; age <= 0 returns 1.0 (treat future/now as
+// fully fresh); halfLife <= 0 returns 1.0 (no decay configured -> no penalty).
+// Indeterminate exponential results such as +Inf/+Inf also return 0.0.
 // Use the result as Result.ImportanceScore's sibling: assign to RecencyScore.
 func RecencyFromAge(age, halfLife float64) float64 {
+	if math.IsNaN(age) || math.IsNaN(halfLife) {
+		return 0
+	}
 	if halfLife <= 0 || age <= 0 {
 		return 1.0
 	}
-	return math.Exp2(-age / halfLife)
+	return clamp01(math.Exp2(-age / halfLife))
 }
 
 // Rerank scores and sorts results by combined score (descending).
@@ -151,6 +155,7 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 	weights, adaptiveWeights := s.effectiveWeights(queryTokenCount)
 
 	channels := scoreChannels{}
+	presenceByResult := make(map[*Result]SignalPresence, len(results))
 	var tracesByResult map[*Result]scoreTraceState
 	if trace {
 		tracesByResult = make(map[*Result]scoreTraceState, len(results))
@@ -158,12 +163,13 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 
 	for _, result := range results {
 		rawSignals, signalPresence := computeAndStoreRawSignals(queryEmbedding, queryText, result, &channels)
+		presenceByResult[result] = signalPresence
 		if trace {
 			tracesByResult[result] = scoreTraceState{raw: rawSignals, present: signalPresence}
 		}
 	}
 
-	calibrateScores(results, channels)
+	calibrateScores(results, channels, presenceByResult)
 
 	for _, result := range results {
 		result.CombinedScore = weightedScore(weights, resultScoreSignals(result))
