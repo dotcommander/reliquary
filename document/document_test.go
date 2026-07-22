@@ -1,6 +1,162 @@
 package document
 
-import "testing"
+import (
+	"errors"
+	"io"
+	"strings"
+	"testing"
+)
+
+func TestFromReader(t *testing.T) {
+	t.Parallel()
+
+	metadata := map[string]string{
+		"source":      "test",
+		"filename":    "metadata-name.txt",
+		"document_id": "metadata-id",
+	}
+	option := WithMetadata(metadata)
+	metadata["source"] = "changed"
+
+	doc, err := FromReader(
+		"doc-1",
+		strings.NewReader("\ufefffirst\r\nsecond\rthird"),
+		WithFilename("notes.md"),
+		WithFormat(FormatMarkdown),
+		option,
+	)
+	if err != nil {
+		t.Fatalf("FromReader() error = %v", err)
+	}
+	if doc.ID != "doc-1" {
+		t.Fatalf("ID = %q, want doc-1", doc.ID)
+	}
+	if doc.Title != "notes.md" {
+		t.Fatalf("Title = %q, want notes.md", doc.Title)
+	}
+	if doc.Format != FormatMarkdown {
+		t.Fatalf("Format = %q, want markdown", doc.Format)
+	}
+	if doc.Text != "first\nsecond\nthird" {
+		t.Fatalf("Text = %q, want normalized text", doc.Text)
+	}
+	if got := doc.Metadata["source"]; got != "test" {
+		t.Fatalf("Metadata[source] = %q, want snapshotted value", got)
+	}
+	if got := doc.Metadata["filename"]; got != "metadata-name.txt" {
+		t.Fatalf("Metadata[filename] = %q, want caller value preserved", got)
+	}
+	if got := doc.Metadata["document_id"]; got != "metadata-id" {
+		t.Fatalf("Metadata[document_id] = %q, want caller value preserved", got)
+	}
+
+	second, err := FromReader("doc-2", strings.NewReader("text"), option)
+	if err != nil {
+		t.Fatalf("second FromReader() error = %v", err)
+	}
+	doc.Metadata["source"] = "first-document-change"
+	if got := second.Metadata["source"]; got != "test" {
+		t.Fatalf("reused option shared metadata: got %q", got)
+	}
+}
+
+func TestFromReaderDefaults(t *testing.T) {
+	t.Parallel()
+
+	doc, err := FromReader(
+		"doc-1",
+		strings.NewReader("plain text"),
+		WithFilename("page.md"),
+		WithMetadata(map[string]string{"source": "test"}),
+	)
+	if err != nil {
+		t.Fatalf("FromReader() error = %v", err)
+	}
+	if doc.Format != FormatText {
+		t.Fatalf("Format = %q, want text", doc.Format)
+	}
+	if _, ok := doc.Metadata["filename"]; ok {
+		t.Fatal("metadata contains injected filename")
+	}
+	if _, ok := doc.Metadata["document_id"]; ok {
+		t.Fatal("metadata contains injected document_id")
+	}
+}
+
+func TestFromReaderLimits(t *testing.T) {
+	t.Parallel()
+
+	t.Run("exact limit", func(t *testing.T) {
+		doc, err := FromReader("exact", strings.NewReader("é"), WithMaxBytes(2))
+		if err != nil {
+			t.Fatalf("FromReader() error = %v", err)
+		}
+		if doc.Text != "é" {
+			t.Fatalf("Text = %q, want é", doc.Text)
+		}
+	})
+
+	t.Run("oversized", func(t *testing.T) {
+		_, err := FromReader("large", strings.NewReader("abc"), WithMaxBytes(2))
+		if !errors.Is(err, ErrInputTooLarge) {
+			t.Fatalf("error = %v, want ErrInputTooLarge", err)
+		}
+	})
+
+	t.Run("default oversized", func(t *testing.T) {
+		input := strings.Repeat("x", int(defaultMaxReaderBytes)+1)
+		_, err := FromReader("large", strings.NewReader(input))
+		if !errors.Is(err, ErrInputTooLarge) {
+			t.Fatalf("error = %v, want ErrInputTooLarge", err)
+		}
+	})
+
+	for _, limit := range []int64{0, -1} {
+		limit := limit
+		t.Run("invalid limit", func(t *testing.T) {
+			_, err := FromReader("invalid", strings.NewReader("text"), WithMaxBytes(limit))
+			if err == nil {
+				t.Fatalf("WithMaxBytes(%d) error = nil", limit)
+			}
+		})
+	}
+}
+
+func TestFromReaderRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil reader", func(t *testing.T) {
+		_, err := FromReader("nil", nil)
+		if err == nil {
+			t.Fatal("FromReader() error = nil")
+		}
+	})
+
+	t.Run("invalid UTF-8", func(t *testing.T) {
+		_, err := FromReader("invalid", strings.NewReader(string([]byte{0xff})))
+		if !errors.Is(err, ErrInvalidUTF8) {
+			t.Fatalf("error = %v, want ErrInvalidUTF8", err)
+		}
+	})
+
+	t.Run("reader error", func(t *testing.T) {
+		readerErr := errors.New("reader failed")
+		_, err := FromReader("failure", errorReader{err: readerErr})
+		if !errors.Is(err, readerErr) {
+			t.Fatalf("error = %v, want wrapped reader error", err)
+		}
+	})
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+var _ io.Reader = errorReader{}
 
 func TestNormalizeText(t *testing.T) {
 	t.Parallel()

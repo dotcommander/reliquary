@@ -2,9 +2,29 @@ package document_test
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/dotcommander/reliquary/document"
 )
+
+func ExampleFromReader() {
+	doc, err := document.FromReader(
+		"doc-1",
+		strings.NewReader("\ufeffAlpha\r\nBeta"),
+		document.WithFilename("notes.txt"),
+		document.WithMetadata(map[string]string{"source": "example"}),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println(doc.ID, doc.Title, doc.Format)
+	fmt.Println(doc.Text)
+	// Output:
+	// doc-1 notes.txt text
+	// Alpha
+	// Beta
+}
 
 func ExampleSpan_Text() {
 	text := document.NormalizeText("\ufeffAlpha\r\nBeta")
