@@ -7,6 +7,7 @@ import (
 
 	"github.com/dotcommander/reliquary/chunking"
 	"github.com/dotcommander/reliquary/document"
+	"github.com/dotcommander/reliquary/textutil"
 	"github.com/dotcommander/reliquary/vector"
 )
 
@@ -63,10 +64,23 @@ func ResultsFromDocuments(docs []document.Document, strategy chunking.Strategy, 
 	}
 	results := make([]*Result, 0, len(docs))
 	for _, doc := range docs {
-		for _, chunk := range chunker.Chunk(document.NormalizeText(doc.Text), size, overlap) {
+		normalized := document.NormalizeText(doc.Text)
+		chunks := chunker.Chunk(normalized, size, overlap)
+		cursor := 0
+		for _, chunk := range chunks {
 			metadata := make(map[string]any, len(doc.Metadata))
 			for key, value := range doc.Metadata {
+				if key == ContextStartLineKey || key == ContextEndLineKey {
+					continue
+				}
 				metadata[key] = value
+			}
+			span, ok := resolveContextChunkSpan(normalized, chunk, cursor)
+			if ok {
+				startLine, endLine := chunking.LineRangeForSpan(normalized, span)
+				metadata[ContextStartLineKey] = startLine
+				metadata[ContextEndLineKey] = endLine
+				cursor = chunking.NextChunkCursor(span)
 			}
 			results = append(results, &Result{
 				ID:         fmt.Sprintf("%s#%d", doc.ID, chunk.ID),
@@ -78,6 +92,19 @@ func ResultsFromDocuments(docs []document.Document, strategy chunking.Strategy, 
 		}
 	}
 	return results, nil
+}
+
+func resolveContextChunkSpan(source string, chunk chunking.Chunk, cursor int) (chunking.ChunkSpan, bool) {
+	span, ok := chunking.ResolveChunkSpan(source, chunk, cursor)
+	if ok && span.Start >= cursor {
+		return span, true
+	}
+
+	start, end, ok := textutil.FragmentRange(source, chunk.Text, cursor, textutil.NormalizedEarly)
+	if !ok || start < cursor {
+		return chunking.ChunkSpan{}, false
+	}
+	return chunking.ChunkSpan{Start: start, End: end}, true
 }
 
 // BestChunk returns the chunk with highest cosine similarity.

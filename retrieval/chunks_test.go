@@ -130,6 +130,159 @@ func TestResultsFromDocuments(t *testing.T) {
 	if results[0].ID != "doc#0" || results[0].Filename != "doc.md" || results[0].Content == "" {
 		t.Fatalf("unexpected result: %+v", results[0])
 	}
+	if results[0].Metadata[ContextStartLineKey] != 1 || results[0].Metadata[ContextEndLineKey] != 1 {
+		t.Fatalf("line metadata = %v, want 1-1", results[0].Metadata)
+	}
+}
+
+func TestResultsFromDocumentsNormalizesAndAddsInclusiveLineRanges(t *testing.T) {
+	t.Parallel()
+
+	results, err := ResultsFromDocuments([]document.Document{{
+		ID:   "doc",
+		Text: "\ufeffone\r\ntwo\rthree",
+	}}, chunking.HardCut, 4, 0)
+	if err != nil {
+		t.Fatalf("ResultsFromDocuments() error = %v", err)
+	}
+	want := []struct {
+		content string
+		start   int
+		end     int
+	}{
+		{content: "one\n", start: 1, end: 1},
+		{content: "two\n", start: 2, end: 2},
+		{content: "thre", start: 3, end: 3},
+		{content: "e", start: 3, end: 3},
+	}
+	if len(results) != len(want) {
+		t.Fatalf("ResultsFromDocuments() len = %d, want %d: %#v", len(results), len(want), results)
+	}
+	for i, expected := range want {
+		if results[i].Content != expected.content ||
+			results[i].Metadata[ContextStartLineKey] != expected.start ||
+			results[i].Metadata[ContextEndLineKey] != expected.end {
+			t.Fatalf("result[%d] = content %q metadata %v, want %q lines %d-%d", i, results[i].Content, results[i].Metadata, expected.content, expected.start, expected.end)
+		}
+	}
+}
+
+func TestResultsFromDocumentsResolvesWhitespaceNormalizedChunks(t *testing.T) {
+	t.Parallel()
+
+	results, err := ResultsFromDocuments([]document.Document{{
+		ID:   "doc",
+		Text: "Alpha.  Beta.",
+	}}, chunking.SmartBoundary, 80, 0)
+	if err != nil {
+		t.Fatalf("ResultsFromDocuments() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("ResultsFromDocuments() len = %d, want 1: %#v", len(results), results)
+	}
+	if results[0].Content != "Alpha. Beta." {
+		t.Fatalf("result content = %q, want whitespace-normalized chunk", results[0].Content)
+	}
+	if results[0].Metadata[ContextStartLineKey] != 1 || results[0].Metadata[ContextEndLineKey] != 1 {
+		t.Fatalf("line metadata = %v, want normalized location at 1-1", results[0].Metadata)
+	}
+}
+
+func TestResolveContextChunkSpanSearchesForwardForNormalizedRepeat(t *testing.T) {
+	t.Parallel()
+
+	source := "Alpha Beta\nAlpha   Beta"
+	span, ok := resolveContextChunkSpan(source, chunking.Chunk{Text: "Alpha Beta"}, len("Alpha Beta"))
+	if !ok {
+		t.Fatal("resolveContextChunkSpan() did not find the later normalized fragment")
+	}
+	if start, end := chunking.LineRangeForSpan(source, span); start != 2 || end != 2 {
+		t.Fatalf("resolved line range = %d-%d, want 2-2", start, end)
+	}
+}
+
+func TestResultsFromDocumentsResolvesOverlappingFragmentsForward(t *testing.T) {
+	t.Parallel()
+
+	results, err := ResultsFromDocuments([]document.Document{{
+		ID:   "doc",
+		Text: "first\nsecond\nthird",
+	}}, chunking.HardCut, 13, 7)
+	if err != nil {
+		t.Fatalf("ResultsFromDocuments() error = %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("ResultsFromDocuments() len = %d, want 2: %#v", len(results), results)
+	}
+	if got := results[0].Content; got != "first\nsecond\n" {
+		t.Fatalf("result[0].Content = %q", got)
+	}
+	if got := results[1].Content; got != "second\nthird" {
+		t.Fatalf("result[1].Content = %q", got)
+	}
+	if results[0].Metadata[ContextStartLineKey] != 1 || results[0].Metadata[ContextEndLineKey] != 2 {
+		t.Fatalf("result[0] line metadata = %v, want 1-2", results[0].Metadata)
+	}
+	if results[1].Metadata[ContextStartLineKey] != 2 || results[1].Metadata[ContextEndLineKey] != 3 {
+		t.Fatalf("result[1] line metadata = %v, want 2-3", results[1].Metadata)
+	}
+}
+
+func TestResultsFromDocumentsOwnsReservedLineMetadata(t *testing.T) {
+	t.Parallel()
+
+	results, err := ResultsFromDocuments([]document.Document{{
+		ID:   "doc",
+		Text: "content",
+		Metadata: document.Metadata{
+			"keep":              "value",
+			ContextStartLineKey: "999",
+			ContextEndLineKey:   "1000",
+		},
+	}}, chunking.HardCut, 80, 0)
+	if err != nil {
+		t.Fatalf("ResultsFromDocuments() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("ResultsFromDocuments() len = %d, want 1", len(results))
+	}
+	metadata := results[0].Metadata
+	if metadata["keep"] != "value" || metadata[ContextStartLineKey] != 1 || metadata[ContextEndLineKey] != 1 {
+		t.Fatalf("result metadata = %v, want caller metadata plus owned 1-1 range", metadata)
+	}
+}
+
+func TestResultsFromDocumentsLeavesUnresolvedRangesAbsent(t *testing.T) {
+	t.Parallel()
+
+	table := "| Name | Type | Value |\n" +
+		"|------|------|--------|\n" +
+		"| item-0 | type-0 | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |\n" +
+		"| item-1 | type-1 | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |\n" +
+		"| item-2 | type-2 | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |\n" +
+		"| item-3 | type-3 | xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx |\n"
+	results, err := ResultsFromDocuments([]document.Document{{
+		ID:   "doc",
+		Text: table,
+		Metadata: document.Metadata{
+			ContextStartLineKey: "999",
+			ContextEndLineKey:   "1000",
+		},
+	}}, chunking.MarkdownAware, 100, 0)
+	if err != nil {
+		t.Fatalf("ResultsFromDocuments() error = %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("ResultsFromDocuments() len = %d, want multiple synthetic table chunks: %#v", len(results), results)
+	}
+	for i, result := range results {
+		if _, ok := result.Metadata[ContextStartLineKey]; ok {
+			t.Fatalf("result[%d] retained unresolved start line: %v", i, result.Metadata)
+		}
+		if _, ok := result.Metadata[ContextEndLineKey]; ok {
+			t.Fatalf("result[%d] retained unresolved end line: %v", i, result.Metadata)
+		}
+	}
 }
 
 func TestResultsFromDocumentsRejectsInvalidIDs(t *testing.T) {
