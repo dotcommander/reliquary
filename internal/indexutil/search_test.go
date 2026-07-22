@@ -117,12 +117,35 @@ func TestClone(t *testing.T) {
 	orig := &retrieval.Result{
 		ID:        "1",
 		Embedding: []float64{1.0, 2.0},
-		Metadata:  map[string]any{"key": "val"},
+		Metadata: map[string]any{
+			"key": "val",
+			"object": map[string]any{
+				"nested": map[string]any{"value": "original"},
+			},
+			"array": []any{
+				"first",
+				map[string]any{"value": "original"},
+				[]any{"nested", map[string]any{"value": "original"}},
+			},
+			"nil":        nil,
+			"nil_object": map[string]any(nil),
+			"nil_array":  []any(nil),
+		},
+		Explain: &retrieval.SearchExplanation{
+			HybridRank: 1,
+			FinalRank:  2,
+		},
 	}
 
 	cloned := Clone(orig)
 	if cloned == orig {
 		t.Fatal("expected different pointer")
+	}
+	if cloned.Explain != nil {
+		t.Fatalf("clone explanation = %#v, want nil", cloned.Explain)
+	}
+	if orig.Explain == nil || orig.Explain.FinalRank != 2 {
+		t.Fatalf("source explanation changed: %#v", orig.Explain)
 	}
 
 	cloned.Embedding[0] = 99.0
@@ -133,6 +156,31 @@ func TestClone(t *testing.T) {
 	cloned.Metadata["key"] = "new_val"
 	if orig.Metadata["key"] == "new_val" {
 		t.Fatal("metadata map aliased")
+	}
+	if cloned.Metadata["key"] != "new_val" {
+		t.Fatalf("clone metadata = %#v, want preserved writable copy", cloned.Metadata)
+	}
+
+	cloned.Metadata["object"].(map[string]any)["nested"].(map[string]any)["value"] = "changed"
+	cloned.Metadata["array"].([]any)[1].(map[string]any)["value"] = "changed"
+	cloned.Metadata["array"].([]any)[2].([]any)[1].(map[string]any)["value"] = "changed"
+	if got := orig.Metadata["object"].(map[string]any)["nested"].(map[string]any)["value"]; got != "original" {
+		t.Fatalf("nested object aliased: got %v", got)
+	}
+	if got := orig.Metadata["array"].([]any)[1].(map[string]any)["value"]; got != "original" {
+		t.Fatalf("object in array aliased: got %v", got)
+	}
+	if got := orig.Metadata["array"].([]any)[2].([]any)[1].(map[string]any)["value"]; got != "original" {
+		t.Fatalf("nested array aliased: got %v", got)
+	}
+	if cloned.Metadata["nil"] != nil {
+		t.Fatalf("nil metadata value = %#v, want nil", cloned.Metadata["nil"])
+	}
+	if cloned.Metadata["nil_object"].(map[string]any) != nil {
+		t.Fatalf("nil object = %#v, want typed nil", cloned.Metadata["nil_object"])
+	}
+	if cloned.Metadata["nil_array"].([]any) != nil {
+		t.Fatalf("nil array = %#v, want typed nil", cloned.Metadata["nil_array"])
 	}
 
 	origNoMeta := &retrieval.Result{ID: "2"}

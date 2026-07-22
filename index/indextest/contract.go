@@ -436,20 +436,28 @@ func Run(t *testing.T, newIndex Factory) {
 
 	t.Run("mutation isolation and round trip", func(t *testing.T) {
 		idx := newIndex()
-		item := &retrieval.Result{ID: "stable", DocumentID: "doc", Filename: "doc.md", Content: "original", Embedding: []float64{1, 0}, Metadata: map[string]any{"tenant": "one"}}
+		item := &retrieval.Result{ID: "stable", DocumentID: "doc", Filename: "doc.md", Content: "original", Embedding: []float64{1, 0}, Metadata: map[string]any{
+			"tenant": "one",
+			"nested": map[string]any{"value": "original"},
+			"array":  []any{map[string]any{"value": "original"}},
+		}}
 		mustUpsert(t, idx, []*retrieval.Result{item})
 		item.Content = "input mutation"
 		item.Embedding[0] = 0
 		item.Metadata["tenant"] = "changed"
+		item.Metadata["nested"].(map[string]any)["value"] = "input mutation"
+		item.Metadata["array"].([]any)[0].(map[string]any)["value"] = "input mutation"
 
 		got := mustSearch(t, idx, indexcontract.IndexQuery{Filter: map[string]any{"id": "stable"}})
-		if len(got) != 1 || got[0].ID != "stable" || got[0].DocumentID != "doc" || got[0].Filename != "doc.md" || got[0].Content != "original" || got[0].Embedding[0] != 1 || got[0].Metadata["tenant"] != "one" {
+		if len(got) != 1 || got[0].ID != "stable" || got[0].DocumentID != "doc" || got[0].Filename != "doc.md" || got[0].Content != "original" || got[0].Embedding[0] != 1 || got[0].Metadata["tenant"] != "one" || got[0].Metadata["nested"].(map[string]any)["value"] != "original" || got[0].Metadata["array"].([]any)[0].(map[string]any)["value"] != "original" {
 			t.Fatalf("round trip after input mutation = %#v", got)
 		}
 		got[0].Embedding[0] = 0
 		got[0].Metadata["tenant"] = "returned mutation"
+		got[0].Metadata["nested"].(map[string]any)["value"] = "returned mutation"
+		got[0].Metadata["array"].([]any)[0].(map[string]any)["value"] = "returned mutation"
 		again := mustSearch(t, idx, indexcontract.IndexQuery{Filter: map[string]any{"id": "stable"}})
-		if again[0].Embedding[0] != 1 || again[0].Metadata["tenant"] != "one" {
+		if again[0].Embedding[0] != 1 || again[0].Metadata["tenant"] != "one" || again[0].Metadata["nested"].(map[string]any)["value"] != "original" || again[0].Metadata["array"].([]any)[0].(map[string]any)["value"] != "original" {
 			t.Fatalf("stored state aliased returned result: %#v", again[0])
 		}
 	})

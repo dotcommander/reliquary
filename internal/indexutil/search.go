@@ -47,18 +47,47 @@ func Search(ctx context.Context, query indexcontract.IndexQuery, items []*retrie
 	return ranked, nil
 }
 
-// Clone returns a result whose embedding and top-level metadata map do not
-// alias stored state. Metadata values retain their original value semantics.
+// Clone returns a result whose embedding and canonical JSON metadata containers
+// do not alias stored state. Nested map[string]any objects and []any arrays are
+// cloned recursively. Typed containers such as map[string]string retain their
+// original value semantics and are outside this isolation guarantee.
 func Clone(item *retrieval.Result) *retrieval.Result { return clone(item) }
 
 func clone(item *retrieval.Result) *retrieval.Result {
 	cp := *item
+	cp.Explain = nil
 	cp.Embedding = slices.Clone(item.Embedding)
 	if item.Metadata != nil {
-		cp.Metadata = make(map[string]any, len(item.Metadata))
-		for key, value := range item.Metadata {
-			cp.Metadata[key] = value
-		}
+		cp.Metadata = cloneJSONObject(item.Metadata)
 	}
 	return &cp
+}
+
+func cloneJSONValue(value any) any {
+	switch value := value.(type) {
+	case map[string]any:
+		if value == nil {
+			return map[string]any(nil)
+		}
+		return cloneJSONObject(value)
+	case []any:
+		if value == nil {
+			return []any(nil)
+		}
+		cloned := make([]any, len(value))
+		for i, item := range value {
+			cloned[i] = cloneJSONValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func cloneJSONObject(object map[string]any) map[string]any {
+	cloned := make(map[string]any, len(object))
+	for key, value := range object {
+		cloned[key] = cloneJSONValue(value)
+	}
+	return cloned
 }

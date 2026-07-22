@@ -68,7 +68,11 @@ type Resetter interface {
 // Strings and booleans are type-exact, while finite JSON numbers compare by
 // exact numeric value across accepted Go numeric types and json.Number. The
 // reserved id, document_id, and filename fields match strings only. A zero
-// Limit leaves the candidate count implementation-defined or unbounded.
+// Limit leaves the candidate count implementation-defined or unbounded. A
+// query may populate both Text and Vector for mixed retrieval, only Vector for
+// a vector lane, or only Text for a lexical lane. Index implementations may
+// route those shapes independently; a text-only query does not imply any
+// particular lexical engine or scoring algorithm.
 type IndexQuery struct {
 	Identity string
 	Text     string

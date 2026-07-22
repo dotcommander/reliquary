@@ -32,7 +32,8 @@ func DefaultWeights() Weights {
 // corpus min-max calibrated by Rerank: importance is an absolute salience tier
 // and recency is an absolute time-decay, so corpus-relative rescaling would
 // distort their meaning. Map your own importance tier (e.g. 1..5) or timestamp
-// age (see RecencyFromAge) into 0..1 before assigning.
+// age (see RecencyFromAge) into 0..1 before assigning. Explain is ephemeral
+// facade output and is nil unless reliquary.WithExplain was requested.
 type Result struct {
 	ID              string
 	IndexIdentity   string
@@ -47,6 +48,7 @@ type Result struct {
 	RecencyScore    float64
 	ImportanceScore float64
 	CombinedScore   float64
+	Explain         *SearchExplanation
 }
 
 // ScoreSignals groups retrieval signal values.
