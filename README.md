@@ -5,7 +5,7 @@ features. Start in memory, then bring your own embedder and index when you need
 production storage and retrieval quality.
 
 ```sh
-go get github.com/dotcommander/reliquary@v0.10.0
+go get github.com/dotcommander/reliquary@v0.11.0
 ```
 
 ```go

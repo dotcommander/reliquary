@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.11.0 (2026-07-22)
+
+### Breaking changes
+
+- Add the exported `Result.Explain` field. Callers using unkeyed
+  `retrieval.Result` struct literals must add the new field or switch to keyed
+  literals.
+
+### Added
+
+- Add bounded UTF-8 document construction from readers with explicit byte
+  limits, normalized text, filenames, and metadata snapshots.
+- Add source-aware context formatting with caller-owned token budgets and
+  inclusive source-line metadata.
+- Add deterministic, resumable filesystem ingestion with bounded reads,
+  record-aware decoding, and cursor checkpoints.
+- Add a caller-owned Ollama embedding adapter for the native `/api/embed`
+  endpoint.
+- Add batch search, reciprocal rank fusion, external reranking, and opt-in
+  explanations across hybrid, RRF, reranker, and MMR stages.
+
+### Changed
+
+- Make `pipeline/ingest.Pipeline.Run` deliver empty continuation and terminal
+  batches to sinks, and return `ErrCursorNotAdvanced` when a nonterminal read
+  repeats its input cursor.
+- Make `retrieval.ResultsFromDocuments` replace caller-provided context line
+  metadata with source-derived inclusive line numbers when a chunk can be
+  resolved.
+
+### Documentation
+
+- Document the expanded ingestion and retrieval workflows with runnable
+  examples and detailed scoring semantics.
+
 ## v0.10.0 (2026-07-21)
 
 ### Breaking changes

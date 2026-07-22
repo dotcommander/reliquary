@@ -32,7 +32,7 @@ This document outlines the strict behavioral contracts, storage invariants, and 
 - `CandidateLimit` and a fresh filter map apply independently to each lane. The fused union may contain up to twice the candidate limit.
 - Fusion uses `pipeline/lexical.FuseRRFByID`. Overlapping IDs receive both rank contributions, while duplicate IDs within one lane contribute only their first rank. Exact fused ties use ascending ID.
 - Nil candidates are skipped. Blank result IDs fail the search. For overlapping IDs, the vector-lane result supplies the returned payload; lexical-only results remain eligible.
-- Raw RRF scores are normalized by `nonemptyLaneCount / (k+1)` and stored in `CombinedScore`. Empty successful lanes are valid; two empty lanes return no results.
+- Raw RRF scores are normalized by `(k+1) / nonemptyLaneCount` and stored in `CombinedScore`. Empty successful lanes are valid; two empty lanes return no results.
 - Hybrid component fields are computed over the fused union for diagnostics. App-level `WithWeights` does not affect RRF order or final `CombinedScore`.
 - An optional external reranker runs after RRF and may replace `CombinedScore`; TopK and MMR remain the final stages. Any lane error or cancellation is fatal, with no fallback or partial results.
 - `WithRRF` orchestrates rankings returned by the configured index. It does not add BM25, Bleve, or another lexical backend, and it does not change the PostgreSQL adapter into a full-text-search backend.
