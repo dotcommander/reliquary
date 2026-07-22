@@ -11,6 +11,8 @@ here operates on vectors you already have.
 ## Contents
 
 - [Reranking a batch](#reranking-a-batch)
+- [Reciprocal rank fusion in App.Search](#reciprocal-rank-fusion-in-appsearch)
+- [External rerankers in App.Search](#external-rerankers-in-appsearch)
 - [Explaining score contributions](#explaining-score-contributions)
 - [Calibrated single-document scoring](#calibrated-single-document-scoring)
 - [Diversification with MMR](#diversification-with-mmr)
@@ -88,11 +90,114 @@ w := retrieval.AdaptiveWeights(3) // 3 tokens → DefaultWeights
 non-positive ages or half-lives as fully fresh and fails closed to `0` for NaN
 or indeterminate infinite inputs.
 
+## Reciprocal rank fusion in App.Search
+
+Use `reliquary.WithRRF(k)` when your configured index can provide independent
+vector and lexical rankings:
+
+```go
+hits, err := app.Search(ctx, query,
+	reliquary.CandidateLimit(50),
+	reliquary.WithRRF(60),
+	reliquary.TopK(5),
+)
+```
+
+For every nonblank query, Reliquary calls `Index.Search` sequentially with these
+shapes:
+
+```text
+vector lane:  Text="",    Vector=<query embedding>
+lexical lane: Text=query, Vector=nil
+```
+
+The filter and candidate limit apply independently to both lanes, so the fused
+union can contain up to twice the requested candidate limit. `k <= 0` uses the
+standard RRF constant `60`; non-finite values use the same safe default.
+
+Fusion uses result IDs and rank positions, not provider score magnitudes. An ID
+present in both lanes receives both rank contributions; a duplicate within one
+lane contributes only its first rank. Exact score ties sort by ascending ID.
+The vector result supplies the payload for overlapping IDs, while lexical-only
+results remain eligible.
+
+`CombinedScore` is the raw RRF score normalized by the maximum contribution
+available from the nonempty lanes, `nonemptyLaneCount / (k+1)`. Hybrid component
+fields are still populated for diagnostics, but app-level `WithWeights` does
+not change the RRF order or normalized `CombinedScore`.
+
+`WithRRF` orchestrates rankings supplied by your `index.Index`; it does not add
+BM25, Bleve, or another lexical engine. Use a custom composite index to route
+the two query shapes to separate backends. The PostgreSQL adapter is unchanged
+and should not be treated as a true full-text-search backend.
+
+## External rerankers in App.Search
+
+`reliquary.WithReranker` adds a caller-supplied cross-encoder or similar model
+to the high-level search path. Without RRF, the path is:
+
+```text
+candidate retrieval -> hybrid scoring -> external reranker -> TopK/MMR
+```
+
+With `WithRRF`, it is:
+
+```text
+vector + lexical candidate lanes -> RRF -> external reranker -> TopK/MMR
+```
+
+The external reranker receives candidates in hybrid-ranked or RRF-ranked order.
+Their `EmbeddingScore`, `KeywordScore`, `FilenameScore`, `RecencyScore`, and
+`ImportanceScore` fields remain the hybrid scorer's component values. After a
+successful external response, `CombinedScore` becomes the external score and
+the results are stable-sorted by it, so equal external scores retain the
+preceding hybrid or RRF order.
+
+The reranker must return exactly one finite score in `[0,1]` per candidate.
+Errors, cancellation, or invalid scores fail the whole search without partial
+results or fallback to the preceding ranking. Candidate values are defensive
+clones; mutations inside a reranker do not affect stored or returned results.
+
+`RerankWithTrace` describes the hybrid stage. Its `ScoreTrace.CombinedScore` is
+therefore the pre-external-reranker combined score when the same candidates are
+later passed through `App.Search` with `WithReranker`.
+
 ## Explaining score contributions
 
-Use `RerankWithTrace` when you need to explain why a result ranked where it did.
-It runs the same scoring path as `Rerank`, sorts the same result slice in-place,
-and returns one `ScoreTrace` per ranked result in the same order.
+Use `reliquary.WithExplain()` on `App.Search` or `App.SearchBatch` to attach a
+typed `SearchExplanation` to every returned result:
+
+```go
+hits, err := app.Search(ctx, query,
+	reliquary.WithRRF(60),
+	reliquary.WithReranker(reranker),
+	reliquary.WithMMR(0.5),
+	reliquary.WithExplain(),
+)
+```
+
+`Result.Explain` is nil by default. When enabled, it records the hybrid
+`ScoreTrace` and rank, whether the hybrid score owned ordering, optional RRF,
+external-reranker, and MMR details, and the one-based final rank. The RRF trace
+contains effective `k`, lane ranks, normalized lane contributions, fused score,
+and fused rank. The external-reranker trace contains only its observable input
+rank, returned score, and resulting rank; the current interface exposes no
+model-internal reasoning. The MMR trace records its clamped lambda, incoming
+relevance, maximum positive selected-item cosine similarity, relevance
+contribution, signed penalty, and selection score. Missing, orthogonal, and
+negatively correlated embeddings contribute zero similarity. MMR changes order without replacing
+`CombinedScore`.
+
+Explanations are ephemeral and are cleared at index clone/storage boundaries.
+They do not change `Metadata`. They cover candidates retained for facade-level
+ranking, not why the index or an earlier candidate-generation stage excluded
+other items. `Hybrid.Raw.Keyword` is token overlap between the query and result
+content; it is not backend-native BM25 provenance. The SQLite adapter currently
+uses FTS `MATCH` for candidate selection without exposing an FTS score.
+
+At the lower-level scorer API, `RerankWithTrace` explains why a result ranked
+where it did. It runs the same scoring path as `Rerank`, sorts the same result
+slice in-place, and returns one `ScoreTrace` per ranked result in the same order.
 
 ```go
 ranked, traces := scorer.RerankWithTrace(queryEmbedding, "machine learning", results)
@@ -120,9 +225,11 @@ Each trace includes:
 | `Present` | which signals had usable inputs for that result |
 | `QueryTokenCount` / `AdaptiveWeights` | query analysis used to select the effective text weights |
 
-`ScoreTrace` is diagnostic output. Treat `CombinedScore` and the ranked result
-order as the behavioral contract; use the per-signal fields to debug and tune
-weights.
+`ScoreTrace` is diagnostic output. In the default weighted path, its
+`CombinedScore` and ranked order are the behavioral contract until an external
+reranker runs. With RRF or an external reranker, use the trace and per-signal
+fields only to explain the hybrid component stage; final order and
+`Result.CombinedScore` belong to RRF or the external reranker.
 
 ---
 
