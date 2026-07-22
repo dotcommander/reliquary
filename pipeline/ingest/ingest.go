@@ -1,7 +1,14 @@
 // Package ingest defines generic ingestion contracts without source policy.
 package ingest
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrCursorNotAdvanced reports a nonterminal page that repeats the requested
+// cursor. Continuing would reread the same page indefinitely.
+var ErrCursorNotAdvanced = errors.New("ingest: cursor not advanced")
 
 // Cursor identifies a resumable position in a caller-owned source.
 type Cursor struct {
@@ -39,6 +46,12 @@ type Reader[T any] interface {
 // Decoder converts raw source bytes into records.
 type Decoder[T any] interface {
 	Decode(ctx context.Context, data []byte) ([]Record[T], error)
+}
+
+// RecordDecoder converts a raw record while retaining its ID and metadata.
+// Implementations explicitly own propagation of the input record envelope.
+type RecordDecoder[T any] interface {
+	DecodeRecord(ctx context.Context, record Record[[]byte]) ([]Record[T], error)
 }
 
 // Mapper maps records between semantic spaces.
