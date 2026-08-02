@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.12.0 (2026-08-01)
 
 ### Added
 
@@ -12,6 +12,13 @@
 - Add an opt-in vector-index knee harness that compares exact search with
   binary candidate generation plus exact reranking, including deterministic
   recall, latency, payload, concurrency, and strict-threshold gates.
+
+### Fixed
+
+- Validate complete OpenAI embedding results after float conversion so values
+  that overflow float32 are rejected before crossing the adapter boundary.
+- Keep token-based chunks within the requested token window while preserving
+  overlap source spans and accurate finalized token counts.
 
 ## v0.11.0 (2026-07-22)
 
