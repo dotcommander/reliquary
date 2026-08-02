@@ -9,6 +9,9 @@
   validation, cancellation, and defensive vector ownership.
 - Add `embedding/cache/inmem`, a concurrency-safe process-local Store with
   zero-value support and isolated vector ownership on reads and writes.
+- Add an opt-in vector-index knee harness that compares exact search with
+  binary candidate generation plus exact reranking, including deterministic
+  recall, latency, payload, concurrency, and strict-threshold gates.
 
 ## v0.11.0 (2026-07-22)
 

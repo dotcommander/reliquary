@@ -89,6 +89,46 @@ ordered transform digest and store it in `IndexProfileHash`.
 quantization labels, exact-rescore flags, memory estimates, recall@K, and
 latency summaries without importing an ANN engine or vector database.
 
+### Vector index knee harness
+
+Use the opt-in test harness to compare the exact index with binary candidate
+generation followed by exact `SearchKeys` reranking:
+
+```sh
+RELIQUARY_VECTOR_INDEX_KNEE=1 \
+GOWORK=off go test ./vector \
+  -run '^TestVectorIndexKneeHarness$' -count=1 -v
+```
+
+Use strict mode only when a comparison needs explicit binary recall or latency
+gates. This deterministic quality gate raises the candidate limit because the
+default 100-candidate evidence run does not meet these recall thresholds:
+
+```sh
+RELIQUARY_VECTOR_INDEX_KNEE=1 \
+RELIQUARY_VECTOR_INDEX_KNEE_CANDIDATES=700 \
+RELIQUARY_VECTOR_INDEX_KNEE_STRICT=1 \
+RELIQUARY_VECTOR_INDEX_KNEE_APPROX_MIN_RECALL_AT_1=0.99 \
+RELIQUARY_VECTOR_INDEX_KNEE_APPROX_MIN_RECALL_AT_5=0.98 \
+GOWORK=off go test ./vector \
+  -run '^TestVectorIndexKneeHarness$' -count=1 -v
+```
+
+Use the reduced cohort to verify concurrent query execution under the race
+detector:
+
+```sh
+RELIQUARY_VECTOR_INDEX_KNEE=1 \
+RELIQUARY_VECTOR_INDEX_KNEE_SIZES=200 \
+RELIQUARY_VECTOR_INDEX_KNEE_DIM=64 \
+RELIQUARY_VECTOR_INDEX_KNEE_QUERIES=16 \
+RELIQUARY_VECTOR_INDEX_KNEE_CONCURRENCY=4 \
+GOWORK=off go test -race ./vector \
+  -run '^TestVectorIndexKneeHarness$' -count=1
+```
+
+The harness does not select or recommend an index default.
+
 ### Reciprocal rank fusion
 
 ```go
