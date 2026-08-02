@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -105,6 +106,29 @@ func TestEmbedMapsBatchAndOrdersVectorsByIndex(t *testing.T) {
 	}
 	if result.Model.Provider != "openai" || result.Model.Name != "embedding-response" || result.Model.Version != "2" || result.Model.Revision != "r1" {
 		t.Fatalf("model = %#v", result.Model)
+	}
+}
+
+func TestEmbedRejectsNonFiniteConvertedValues(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","model":"embedding-response","data":[{"object":"embedding","index":0,"embedding":[1e100]}],"usage":{"prompt_tokens":1,"total_tokens":1}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client := openaisdk.NewClient(option.WithAPIKey("test"), option.WithBaseURL(server.URL))
+	embedder, err := New(client, Config{Model: "embedding-default", Dimensions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := embedder.Embed(context.Background(), embeddingcontract.Request{Inputs: []string{"input"}})
+	if !errors.Is(err, embeddingcontract.ErrInvalidResult) {
+		t.Fatalf("Embed() error = %v, want %v", err, embeddingcontract.ErrInvalidResult)
+	}
+	if result.Model != (embeddingcontract.ModelRef{}) || result.Vectors != nil {
+		t.Fatalf("Embed() result = %#v, want zero result", result)
 	}
 }
 

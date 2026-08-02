@@ -97,11 +97,14 @@ func (e *Embedder) Embed(ctx context.Context, request embeddingcontract.Request)
 		vectors[data.Index] = vector
 		seen[data.Index] = true
 	}
-	if err := embeddingcontract.ValidateDimensions(vectors, model.Dim); err != nil {
-		return embeddingcontract.Result{}, fmt.Errorf("openai adapter: %w", err)
-	}
 	if response.Model != "" {
 		model.Name = response.Model
 	}
-	return embeddingcontract.Result{Model: model, Vectors: vectors}, nil
+	result := embeddingcontract.Result{Model: model, Vectors: vectors}
+	validatedRequest := request
+	validatedRequest.Model = model
+	if err := embeddingcontract.ValidateResult(validatedRequest, result); err != nil {
+		return embeddingcontract.Result{}, fmt.Errorf("openai adapter: %w", err)
+	}
+	return result, nil
 }
