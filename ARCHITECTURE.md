@@ -15,6 +15,12 @@ App facade -> ingestion/chunking/retrieval -> Index contract
   behavioral contract for every implementation.
 - `chunking`, `document`, `embedding`, `retrieval`, `dedup`, `textutil`, and
   `vector` are the flat public retrieval building blocks.
+- `embedding/cache` is a provider-neutral decorator over `embedding.Embedder`.
+  It depends only on the embedding contract and an injected caller-owned Store;
+  it supplies no backend, persistence lifecycle, or provider policy.
+- `embedding/cache/inmem` is the optional process-local Store implementation.
+  It owns only concurrency-safe entry retention and vector isolation; capacity,
+  expiration, eviction, and persistence remain outside its boundary.
 - `pipeline/ingest`, `pipeline/ingest/fs`, `pipeline/indexsink`, and
   `pipeline/lexical` retain their pipeline-qualified names because they compose
   multiple public building blocks.
@@ -29,7 +35,8 @@ App facade -> ingestion/chunking/retrieval -> Index contract
   implementation details shared inside this module.
 
 The module owns no process lifecycle and performs no hidden database migration.
-External clients and database handles are injected and remain caller-owned.
+External clients, database handles, and cache stores are injected and remain
+caller-owned.
 
 Product memory, graph behavior, and generic application infrastructure are
 outside Reliquary's retrieval-only boundary.

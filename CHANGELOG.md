@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add the provider-neutral `embedding/cache` decorator with caller-owned Store
+  semantics, explicit cache identity, unique-miss batching, fail-closed
+  validation, cancellation, and defensive vector ownership.
+- Add `embedding/cache/inmem`, a concurrency-safe process-local Store with
+  zero-value support and isolated vector ownership on reads and writes.
+
 ## v0.11.0 (2026-07-22)
 
 ### Breaking changes

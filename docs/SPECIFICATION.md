@@ -12,6 +12,15 @@ This document outlines the strict behavioral contracts, storage invariants, and 
 - Must pass the shared behavioral test suite in `embedding/embeddingtest`.
 - Reliquary validates all embedder outputs before updating internal retrieval structures or persisting vectors to an index.
 
+### Embedding Cache Decorator
+- `embedding/cache` decorates an injected `embedding.Embedder` with an injected caller-owned Store. It provides no backend, lifecycle, TTL, eviction, singleflight, or background work.
+- Callers provide a nonblank cache identity and change it whenever provider, model, revision, dimensions, preprocessing, or output semantics change. Opaque keys also include the requested `ModelRef` and exact input bytes.
+- Empty requests delegate once without Store access. Nonempty requests perform one lookup per unique key, one ordered base call for all unique misses, and at most one write per unique miss before restoring the original input order.
+- Cached entries, generated misses, and assembled results are validated before writes. Every entry in a batch must have exactly the same resolved `ModelRef`; disagreement fails with `cache.ErrModelMismatch`.
+- Store, embedder, validation, model, and cancellation errors fail closed with no partial result. Successful writes before a later write failure or cancellation may remain; the decorator performs no rollback or stale fallback.
+- Store inputs, Store outputs, base results, duplicate positions, and returned vectors do not share mutable vector backing arrays. Concurrent safety remains the responsibility of the supplied Store and embedder.
+- `embedding/cache/inmem` is an optional concurrency-safe, process-local Store. Its zero value is usable; reads and writes clone vectors, canceled operations do not mutate state, and entries have no persistence, capacity, TTL, eviction, statistics, or lifecycle semantics.
+
 ### Index Identity & Vector Dimensions
 - Production applications **must** provide `WithIndexIdentity` during `reliquary.New(...)` initialization.
 - The index identity tags an index with its embedding model and chunking configuration.

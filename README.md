@@ -150,20 +150,37 @@ examples and tests, but it is not a production embedding model.
 ## Production wiring
 
 Production applications inject an `embedding.Embedder`, an `index.Index`, and
-an explicit index identity:
+an explicit index identity. You can wrap any embedder with the provider-neutral
+`embedding/cache` decorator when you supply a concurrency-safe Store:
 
 ```go
+store := embeddingcacheinmem.New()
+cached, err := embeddingcache.New(embedder, store, embeddingcache.Config{
+	Identity: "openai:text-embedding-3-small:1536:input-v1",
+})
+if err != nil {
+	return err
+}
+
 app, err := reliquary.New(
-	reliquary.WithEmbedder(embedder),
+	reliquary.WithEmbedder(cached),
 	reliquary.WithIndex(idx),
-	reliquary.WithIndexIdentity("text-embedding-3-small:v1#smart-boundary"),
+	reliquary.WithIndexIdentity(
+		"openai:text-embedding-3-small:1536:input-v1|smart-boundary:220:0",
+	),
 )
 ```
 
-The identity names the embedding space and chunking policy stored in the index.
-Reliquary rejects reads and writes with a different identity even when the
-vector dimensions match. Change the identity and call `ResetIndex` before a
-deliberate rebuild.
+The cache identity names provider, model, dimensions, preprocessing, and output
+semantics. Change it whenever any of those change. The separate index identity
+names the complete embedding space and chunking policy stored in the index.
+Reliquary rejects reads and writes with a different index identity even when the
+vector dimensions match. Change the index identity and call `ResetIndex` before
+a deliberate rebuild.
+
+`embedding/cache/inmem` is a concurrency-safe Store for process-local caches.
+It clones vectors on reads and writes but provides no persistence, capacity
+limit, TTL, or eviction policy.
 
 Reliquary includes opt-in adapters for OpenAI and Ollama embeddings,
 PostgreSQL/pgvector, and SQLite/FTS5. The Ollama adapter targets the native
@@ -184,6 +201,8 @@ Custom embedders should run `embedding/embeddingtest`.
 | `reliquary` | High-level `App` facade, options, and constructors |
 | `document` | Document value type and bounded UTF-8 reader construction |
 | `embedding` | Provider-neutral `Embedder`, request, result, and vector contracts |
+| `embedding/cache` | Provider-neutral per-input embedding cache decorator with a caller-owned Store |
+| `embedding/cache/inmem` | Concurrency-safe process-local embedding cache Store |
 | `embed` | Deterministic hashing embedder for demos and tests |
 | `index` | Candidate retrieval contract, in-memory implementation, and `indextest` suite |
 | `chunking` | Boundary-aware text, code, sentence, and heading splitters |

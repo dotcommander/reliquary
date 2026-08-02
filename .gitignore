@@ -6,5 +6,6 @@ CLAUDE.md
 .codex/
 
 .work/
+!/embedding/cache/
 go.work
 go.work.sum
