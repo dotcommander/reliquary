@@ -1,6 +1,7 @@
 package chunking
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -314,4 +315,135 @@ func TestTiktokenCounter_NilSafe(t *testing.T) {
 	var tc *TiktokenCounter
 	assert.Equal(t, 0, tc.MaxTokens())
 	assert.Equal(t, 0, tc.CountTokens("anything"))
+}
+
+func TestTokenChunkerOverlapUsesBoundedHalfOpenWindows(t *testing.T) {
+	t.Parallel()
+
+	const (
+		size    = 5
+		overlap = 2
+	)
+	text := strings.Repeat("a,", 40) + "a"
+
+	tokenizer, err := NewTiktokenTokenizer(defaultEncoding)
+	require.NoError(t, err)
+	tokens, err := tokenizer.Encode(text)
+	require.NoError(t, err)
+
+	want := expectedTokenWindows(t, tokenizer, tokens, size, overlap)
+	require.GreaterOrEqual(t, len(want), 3, "test input must produce multiple windows")
+
+	chunker, err := NewTokenChunker(defaultEncoding)
+	require.NoError(t, err)
+	chunks := chunker.Chunk(text, size, overlap)
+	require.Len(t, chunks, len(want))
+
+	for i, chunk := range chunks {
+		assert.Equal(t, i, chunk.ID)
+		assert.Equal(t, want[i], chunk.Text)
+
+		chunkTokens, err := tokenizer.Encode(chunk.Text)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(chunkTokens), size)
+
+		count, err := tokenizer.Count(chunk.Text)
+		require.NoError(t, err)
+		assert.Equal(t, count, chunk.TokenCount)
+		require.Greater(t, chunk.EndChar, chunk.StartChar)
+		assert.Equal(t, chunk.Text, text[chunk.StartChar:chunk.EndChar])
+
+		if i == 0 {
+			continue
+		}
+		assert.Greater(t, chunk.StartChar, chunks[i-1].StartChar)
+		assert.Less(t, chunk.StartChar, chunks[i-1].EndChar)
+
+		previousTokens, err := tokenizer.Encode(chunks[i-1].Text)
+		require.NoError(t, err)
+		overlapLen := min(overlap, len(chunkTokens))
+		assert.Equal(t,
+			previousTokens[len(previousTokens)-overlapLen:],
+			chunkTokens[:overlapLen],
+		)
+	}
+}
+
+func TestTokenChunkerClampsOverlapToSafeRange(t *testing.T) {
+	t.Parallel()
+
+	const size = 5
+	text := strings.Repeat("a,", 40) + "a"
+
+	tokenizer, err := NewTiktokenTokenizer(defaultEncoding)
+	require.NoError(t, err)
+	tokens, err := tokenizer.Encode(text)
+	require.NoError(t, err)
+
+	chunker, err := NewTokenChunker(defaultEncoding)
+	require.NoError(t, err)
+
+	noOverlap := chunker.Chunk(text, size, 0)
+	negativeOverlap := chunker.Chunk(text, size, -2)
+	require.Equal(t, noOverlap, negativeOverlap)
+
+	chunks := chunker.Chunk(text, size, size+3)
+	want := expectedTokenWindows(t, tokenizer, tokens, size, size-1)
+	require.Len(t, chunks, len(want))
+
+	for i, chunk := range chunks {
+		assert.Equal(t, i, chunk.ID)
+		assert.Equal(t, want[i], chunk.Text)
+
+		chunkTokens, err := tokenizer.Encode(chunk.Text)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(chunkTokens), size)
+	}
+}
+
+func TestTokenChunkerRecountsTokenCountAfterFinalizingText(t *testing.T) {
+	t.Parallel()
+
+	chunker, err := NewTokenChunker(defaultEncoding)
+	require.NoError(t, err)
+	tokenizer, err := NewTiktokenTokenizer(defaultEncoding)
+	require.NoError(t, err)
+
+	chunks := chunker.Chunk(strings.Repeat("a ", 12), 5, 2)
+	require.NotEmpty(t, chunks)
+
+	recounted := false
+	for _, chunk := range chunks {
+		count, err := tokenizer.Count(chunk.Text)
+		require.NoError(t, err)
+		assert.Equal(t, count, chunk.TokenCount)
+		if count < 5 {
+			recounted = true
+		}
+	}
+	require.True(t, recounted, "test input must exercise cleaned final chunk text")
+}
+
+func expectedTokenWindows(t *testing.T, tokenizer *TiktokenTokenizer, tokens []int, size, overlap int) []string {
+	t.Helper()
+
+	effectiveOverlap := overlap
+	if effectiveOverlap < 0 {
+		effectiveOverlap = 0
+	} else if effectiveOverlap >= size {
+		effectiveOverlap = size - 1
+	}
+
+	step := size - effectiveOverlap
+	windows := make([]string, 0, (len(tokens)+step-1)/step)
+	for start := 0; start < len(tokens); start += step {
+		end := min(start+size, len(tokens))
+		text, err := tokenizer.decode(tokens[start:end])
+		require.NoError(t, err)
+		windows = append(windows, text)
+		if end == len(tokens) {
+			break
+		}
+	}
+	return windows
 }

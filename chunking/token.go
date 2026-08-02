@@ -109,16 +109,22 @@ func (t *tokenBasedChunker) Chunk(text string, size int, overlap int) []Chunk {
 	if size <= 0 || text == "" {
 		return nil
 	}
+	effectiveOverlap := overlap
+	if effectiveOverlap < 0 {
+		effectiveOverlap = 0
+	} else if effectiveOverlap >= size {
+		effectiveOverlap = size - 1
+	}
 
 	tokenizer, err := NewTiktokenTokenizer(t.encoding)
 	if err != nil {
 		// Approximate 4 chars per token and fall back to word-boundary splitting.
-		return t.fallback(text, size*4, overlap*4)
+		return t.fallback(text, size*4, effectiveOverlap*4)
 	}
 
 	tokens, err := tokenizer.Encode(text)
 	if err != nil {
-		return t.fallback(text, size*4, overlap*4)
+		return t.fallback(text, size*4, effectiveOverlap*4)
 	}
 	if len(tokens) == 0 {
 		return nil
@@ -128,18 +134,11 @@ func (t *tokenBasedChunker) Chunk(text string, size int, overlap int) []Chunk {
 	chunkID := 0
 	cursor := 0
 
-	for i := 0; i < len(tokens); {
-		start := i
+	// size is positive, so this is always at least one token.
+	step := size - effectiveOverlap
 
-		// Apply overlap from the previous chunk.
-		if chunkID > 0 && overlap > 0 {
-			start = i - overlap
-			if start < 0 {
-				start = 0
-			}
-		}
-
-		end := i + size
+	for start := 0; start < len(tokens); start += step {
+		end := start + size
 		if end > len(tokens) {
 			end = len(tokens)
 		}
@@ -147,7 +146,7 @@ func (t *tokenBasedChunker) Chunk(text string, size int, overlap int) []Chunk {
 		chunkTokens := tokens[start:end]
 		chunkText, err := tokenizer.decode(chunkTokens)
 		if err != nil {
-			return t.fallback(text, size*4, overlap*4)
+			return t.fallback(text, size*4, effectiveOverlap*4)
 		}
 
 		// Clean up boundaries for mid-text splits.
@@ -160,8 +159,15 @@ func (t *tokenBasedChunker) Chunk(text string, size int, overlap int) []Chunk {
 
 		if chunkText != "" {
 			startChar, endChar := findTokenChunkSpan(text, chunkText, cursor)
-			if endChar > cursor {
-				cursor = endChar
+			if endChar > startChar {
+				if effectiveOverlap == 0 {
+					cursor = endChar
+				} else {
+					// Overlapped windows may begin before the previous chunk ends.
+					// Advancing from the prior start still disambiguates repeated
+					// text while allowing the next source span to overlap.
+					cursor = startChar + 1
+				}
 			}
 			chunk := buildChunkWithSpan(chunkID, chunkText, startChar, endChar)
 			chunk.TokenCount = len(chunkTokens)
@@ -169,15 +175,27 @@ func (t *tokenBasedChunker) Chunk(text string, size int, overlap int) []Chunk {
 			chunkID++
 		}
 
-		i = end
+		if end == len(tokens) {
+			break
+		}
 	}
 
-	return EnforceHardLimits(chunks, LimitOptions{MaxChars: size * 6, Overlap: overlap, OriginalText: text})
+	chunks = EnforceHardLimits(chunks, LimitOptions{MaxChars: size * 6, Overlap: effectiveOverlap, OriginalText: text})
+	for i := range chunks {
+		count, err := tokenizer.Count(chunks[i].Text)
+		if err != nil {
+			return t.fallback(text, size*4, effectiveOverlap*4)
+		}
+		chunks[i].TokenCount = count
+	}
+
+	return chunks
 }
 
 // findTokenChunkSpan locates byte offsets for chunkText within original starting
-// from cursor. Uses monotonic forward search so repeated token sequences get
-// correct, non-overlapping spans. Returns (0, 0) if no match is found.
+// from cursor. Uses monotonically increasing start offsets so repeated token
+// sequences are disambiguated while overlapped chunks may retain overlapping
+// spans. Returns (0, 0) if no match is found.
 func findTokenChunkSpan(original, chunkText string, cursor int) (int, int) {
 	if cursor < 0 {
 		cursor = 0
