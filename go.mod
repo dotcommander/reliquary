@@ -8,11 +8,11 @@ retract [v0.3.1, v0.7.0]
 require (
 	github.com/adrg/strutil v0.3.1
 	github.com/jackc/pgx/v5 v5.10.0
-	github.com/openai/openai-go/v3 v3.39.0
-	github.com/pgvector/pgvector-go v0.4.0
+	github.com/openai/openai-go/v3 v3.52.0
+	github.com/pgvector/pgvector-go v0.4.1
 	github.com/pkoukk/tiktoken-go v0.1.8
 	github.com/stretchr/testify v1.11.1
-	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark v1.8.5
 	modernc.org/sqlite v1.43.0
 )
 
@@ -23,7 +23,7 @@ require (
 
 require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/dlclark/regexp2 v1.10.0 // indirect
+	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
@@ -33,14 +33,14 @@ require (
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/tidwall/gjson v1.18.0 // indirect
-	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
-	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.66.10 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
