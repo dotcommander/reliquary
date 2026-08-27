@@ -279,6 +279,7 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 		limit = max(i.candidateLimit, query.Limit)
 	}
 	from := i.table + " AS r"
+	orderBy := "r.id"
 	if strings.TrimSpace(query.Text) != "" {
 		from += " JOIN " + i.ftsTable + " AS f ON f.id=r.id"
 		if where != "" {
@@ -288,8 +289,9 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 		}
 		where += i.ftsTable + " MATCH ?"
 		args = append(args, plainTextFTSQuery(query.Text))
+		orderBy = "bm25(" + i.ftsTable + "), r.id"
 	}
-	statement := fmt.Sprintf(`SELECT r.id, r.document_id, r.filename, r.content, r.metadata, r.embedding, r.index_identity FROM %s%s ORDER BY r.id`, from, where)
+	statement := fmt.Sprintf(`SELECT r.id, r.document_id, r.filename, r.content, r.metadata, r.embedding, r.index_identity FROM %s%s ORDER BY %s`, from, where, orderBy)
 	rows, err := tx.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite index: select candidates: %w", err)

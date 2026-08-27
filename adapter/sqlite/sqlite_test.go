@@ -69,6 +69,31 @@ func TestMigrateIsIdempotentAndFTSBoundsCandidates(t *testing.T) {
 	}
 }
 
+func TestFTSCandidateLimitKeepsStrongestLexicalMatch(t *testing.T) {
+	t.Parallel()
+
+	db := openTestDB(t)
+	idx, _ := New(db, Config{CandidateLimit: 1})
+	if err := idx.Migrate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	items := []*retrieval.Result{
+		{ID: "a-weak", Content: "needle surrounded by many unrelated filler words that dilute its relevance"},
+		{ID: "z-strong", Content: "needle needle needle"},
+	}
+	if err := idx.Upsert(context.Background(), items); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := idx.Search(context.Background(), indexcontract.IndexQuery{Text: "needle", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "z-strong" {
+		t.Fatalf("bounded FTS candidates = %#v, want z-strong", got)
+	}
+}
+
 func TestMigrateRebuildsFTSFromLegacyBaseTable(t *testing.T) {
 	db := openTestDB(t)
 	if _, err := db.Exec(`CREATE TABLE reliquary_index (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, filename TEXT NOT NULL, content TEXT NOT NULL, metadata TEXT NOT NULL, embedding TEXT NOT NULL)`); err != nil {
