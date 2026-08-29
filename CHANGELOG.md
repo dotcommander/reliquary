@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.12.1 (2026-08-29)
+
+### Fixed
+
+- Rank SQLite FTS candidates before applying query `LIMIT`.
+
 ## v0.12.0 (2026-08-01)
 
 ### Added
