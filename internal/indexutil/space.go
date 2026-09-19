@@ -17,6 +17,26 @@ type Space struct {
 	Dimension   int
 }
 
+// ReconcileLegacy fills unestablished state from the space inferred from
+// legacy rows. Established state remains authoritative when it agrees with
+// legacy rows. The receiver is unchanged when reconciliation fails.
+func (s Space) ReconcileLegacy(legacy Space) (Space, error) {
+	if s.IdentitySet && legacy.IdentitySet && s.Identity != legacy.Identity {
+		return s, fmt.Errorf("%w: state has %q, stored rows have %q", indexcontract.ErrIdentityMismatch, s.Identity, legacy.Identity)
+	}
+	if s.Dimension > 0 && legacy.Dimension > 0 && s.Dimension != legacy.Dimension {
+		return s, fmt.Errorf("%w: state has %d dimensions, stored rows have %d", indexcontract.ErrDimensionMismatch, s.Dimension, legacy.Dimension)
+	}
+	next := s
+	if !next.IdentitySet {
+		next.Identity, next.IdentitySet = legacy.Identity, legacy.IdentitySet
+	}
+	if next.Dimension == 0 {
+		next.Dimension = legacy.Dimension
+	}
+	return next, nil
+}
+
 // ValidateResults returns the space produced by accepting items. The receiver
 // is unchanged when validation fails. The first non-nil result establishes the
 // identity, and the first result with an embedding establishes the dimension.

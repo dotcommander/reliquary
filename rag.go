@@ -72,31 +72,23 @@ func (a *App) Ingest(ctx context.Context, docs ...document.Document) (int, error
 // hybrid ordering or optional reciprocal rank fusion, then applies an optional
 // external reranker, TopK, and MMR diversification.
 func (a *App) Search(ctx context.Context, query string, opts ...SearchOption) ([]*retrieval.Result, error) {
-	if err := a.ensureReady(); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(query) == "" {
-		return nil, nil
-	}
-	cfg, err := makeSearchConfig(opts)
+	rows, err := a.searchQueries(ctx, []string{query}, opts)
 	if err != nil {
 		return nil, err
 	}
-	request := embedding.Request{Inputs: []string{query}}
-	embedded, err := a.embedder.Embed(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	if err := embedding.ValidateResult(request, embedded); err != nil {
-		return nil, err
-	}
-	return a.searchEmbedded(ctx, query, embedded.Vectors[0], cfg)
+	return rows[0], nil
 }
 
 // SearchBatch searches multiple queries while preserving their input order.
 // Blank queries produce nil rows. All nonblank queries are embedded in one
 // ordered call, validated as a complete batch, and searched sequentially.
 func (a *App) SearchBatch(ctx context.Context, queries []string, opts ...SearchOption) ([][]*retrieval.Result, error) {
+	return a.searchQueries(ctx, queries, opts)
+}
+
+// searchQueries owns the shared query lifecycle for Search and SearchBatch.
+// It preserves the input alignment, leaving blank queries as nil rows.
+func (a *App) searchQueries(ctx context.Context, queries []string, opts []SearchOption) ([][]*retrieval.Result, error) {
 	if err := a.ensureReady(); err != nil {
 		return nil, err
 	}

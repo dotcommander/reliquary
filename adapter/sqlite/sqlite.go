@@ -415,17 +415,9 @@ func (i *Index) backfillState(ctx context.Context, tx *sql.Tx) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if state.IdentitySet && legacy.IdentitySet && state.Identity != legacy.Identity {
-		return fmt.Errorf("%w: state has %q, stored rows have %q", indexcontract.ErrIdentityMismatch, state.Identity, legacy.Identity)
-	}
-	if state.Dimension > 0 && legacy.Dimension > 0 && state.Dimension != legacy.Dimension {
-		return fmt.Errorf("%w: state has %d dimensions, stored rows have %d", indexcontract.ErrDimensionMismatch, state.Dimension, legacy.Dimension)
-	}
-	if !state.IdentitySet {
-		state.Identity, state.IdentitySet = legacy.Identity, legacy.IdentitySet
-	}
-	if state.Dimension == 0 {
-		state.Dimension = legacy.Dimension
+	state, err = state.ReconcileLegacy(legacy)
+	if err != nil {
+		return err
 	}
 	return i.writeState(ctx, tx, state)
 }

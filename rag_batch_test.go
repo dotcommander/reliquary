@@ -144,6 +144,21 @@ func TestSearchBatchAllBlankDoesNoIO(t *testing.T) {
 	}
 }
 
+func TestSearchBlankIgnoresOptionsAndDoesNoIO(t *testing.T) {
+	embedder := &batchRecordingEmbedder{err: errors.New("must not embed")}
+	index := &batchRecordingIndex{err: errors.New("must not search"), failAt: 1}
+	app := newBatchTestApp(t, embedder, index)
+	opts := []reliquary.SearchOption{reliquary.WithFilter(map[string]any{"bad": []string{"ignored"}})}
+
+	results, err := app.Search(context.Background(), " \t", opts...)
+	if err != nil || results != nil {
+		t.Fatalf("Search blank = %#v, %v, want nil, nil", results, err)
+	}
+	if embedder.calls != 0 || len(index.queries) != 0 {
+		t.Fatalf("I/O calls = embed %d, index %d", embedder.calls, len(index.queries))
+	}
+}
+
 func TestSearchBatchValidatesCompleteEmbeddingBeforeIndexAccess(t *testing.T) {
 	tests := []struct {
 		name   string
