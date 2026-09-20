@@ -208,7 +208,7 @@ Custom embedders should run `embedding/embeddingtest`.
 | `chunking` | Boundary-aware text, code, sentence, and heading splitters |
 | `retrieval` | Hybrid scoring, MMR, filtering, evaluation, and neutral context rendering |
 | `judgment` | Typed `Choice`/`Score`/`Noul` evaluation contracts, validation, and the cache-then-escalation `Router` |
-| `judgment/memory` | Exact-hit judgment memory: scope-and-fingerprint keys, TTL and capacity eviction |
+| `judgment/memory` | Exact-hit and semantic judgment memory: scope-and-fingerprint keys, optional injected-embedder similarity hits, TTL and capacity eviction |
 | `pipeline/ingest` | Generic resumable ingestion contracts and runner |
 | `pipeline/ingest/fs` | Deterministic, bounded local-directory reader |
 | `pipeline/indexsink` | `pipeline/ingest` sink backed by `index.Index` |
