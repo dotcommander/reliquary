@@ -207,6 +207,8 @@ Custom embedders should run `embedding/embeddingtest`.
 | `index` | Candidate retrieval contract, in-memory implementation, and `indextest` suite |
 | `chunking` | Boundary-aware text, code, sentence, and heading splitters |
 | `retrieval` | Hybrid scoring, MMR, filtering, evaluation, and neutral context rendering |
+| `judgment` | Typed `Choice`/`Score`/`Noul` evaluation contracts, validation, and the cache-then-escalation `Router` |
+| `judgment/memory` | Exact-hit judgment memory: scope-and-fingerprint keys, TTL and capacity eviction |
 | `pipeline/ingest` | Generic resumable ingestion contracts and runner |
 | `pipeline/ingest/fs` | Deterministic, bounded local-directory reader |
 | `pipeline/indexsink` | `pipeline/ingest` sink backed by `index.Index` |
@@ -214,6 +216,7 @@ Custom embedders should run `embedding/embeddingtest`.
 | `dedup`, `textutil`, `vector` | Retrieval primitives, vector math, quantization, and clustering |
 | `adapter/openai` | OpenAI embedding adapter |
 | `adapter/ollama` | Native Ollama embedding adapter |
+| `adapter/jev` | Jev typed-evaluation adapter over an injected client |
 | `adapter/postgres`, `adapter/sqlite` | Persistent candidate-retrieval adapters |
 
 ## Documentation

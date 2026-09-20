@@ -8,6 +8,7 @@ retract [v0.3.1, v0.7.0]
 require (
 	github.com/adrg/strutil v0.3.1
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jellydator/ttlcache/v3 v3.4.1
 	github.com/openai/openai-go/v3 v3.52.0
 	github.com/pgvector/pgvector-go v0.4.1
 	github.com/pkoukk/tiktoken-go v0.1.8
