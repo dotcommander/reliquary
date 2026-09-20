@@ -217,6 +217,7 @@ Custom embedders should run `embedding/embeddingtest`.
 | `adapter/openai` | OpenAI embedding adapter; works against any OpenAI-compatible endpoint (local embedding servers) with optional nomic-style document/query task prefixes |
 | `adapter/ollama` | Native Ollama embedding adapter |
 | `adapter/jev` | Jev typed-evaluation adapter over an injected client |
+| `adapter/structjudge` | Schema-forced judge adapter over any injected structured-output client (e.g. a Wormhole-style gateway) |
 | `adapter/postgres`, `adapter/sqlite` | Persistent candidate-retrieval adapters |
 
 ## Documentation
