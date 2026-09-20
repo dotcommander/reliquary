@@ -41,10 +41,25 @@ func (m ModelRef) Identity() string {
 	return identity.String()
 }
 
+// Kind selects the role an embedding request plays for models whose inputs
+// depend on the task. Nomic-family embedding models, for example, require
+// `search_document: ` and `search_query: ` task prefixes; adapters apply
+// prefixes based on this field. The zero value is KindDocument so batch ingest
+// call sites need no changes.
+type Kind int
+
+const (
+	// KindDocument marks inputs as documents to be indexed.
+	KindDocument Kind = iota
+	// KindQuery marks inputs as retrieval queries.
+	KindQuery
+)
+
 // Request is a batch embedding request.
 type Request struct {
 	Model  ModelRef
 	Inputs []string
+	Kind   Kind
 }
 
 // Result is a batch embedding result. A successful Embed call returns exactly

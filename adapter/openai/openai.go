@@ -21,14 +21,22 @@ const (
 type Config struct {
 	Model      string
 	Dimensions int
+	// DocumentPrefix is prepended to every KindDocument input before the
+	// provider call. Empty means no prefix.
+	DocumentPrefix string
+	// QueryPrefix is prepended to every KindQuery input before the provider
+	// call. Empty means no prefix.
+	QueryPrefix string
 }
 
 // Embedder implements Reliquary's embedding contract with an injected OpenAI
 // client.
 type Embedder struct {
-	client openaisdk.Client
-	model  string
-	dims   int
+	client      openaisdk.Client
+	model       string
+	dims        int
+	docPrefix   string
+	queryPrefix string
 }
 
 var _ embeddingcontract.Embedder = (*Embedder)(nil)
@@ -45,7 +53,7 @@ func New(client openaisdk.Client, cfg Config) (*Embedder, error) {
 	if cfg.Dimensions < 1 {
 		return nil, fmt.Errorf("openai adapter: dimensions must be positive")
 	}
-	return &Embedder{client: client, model: cfg.Model, dims: cfg.Dimensions}, nil
+	return &Embedder{client: client, model: cfg.Model, dims: cfg.Dimensions, docPrefix: cfg.DocumentPrefix, queryPrefix: cfg.QueryPrefix}, nil
 }
 
 // Embed generates one vector per input in a single provider call.
@@ -66,8 +74,12 @@ func (e *Embedder) Embed(ctx context.Context, request embeddingcontract.Request)
 	}
 
 	inputs := make([]string, len(request.Inputs))
+	prefix := e.docPrefix
+	if request.Kind == embeddingcontract.KindQuery {
+		prefix = e.queryPrefix
+	}
 	for i, input := range request.Inputs {
-		inputs[i] = strings.ReplaceAll(input, "\n", " ")
+		inputs[i] = prefix + strings.ReplaceAll(input, "\n", " ")
 	}
 	response, err := e.client.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
 		Input:      openaisdk.EmbeddingNewParamsInputUnion{OfArrayOfStrings: inputs},

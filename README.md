@@ -214,7 +214,7 @@ Custom embedders should run `embedding/embeddingtest`.
 | `pipeline/indexsink` | `pipeline/ingest` sink backed by `index.Index` |
 | `pipeline/lexical` | Lexical analysis, BM25, and result fusion |
 | `dedup`, `textutil`, `vector` | Retrieval primitives, vector math, quantization, and clustering |
-| `adapter/openai` | OpenAI embedding adapter |
+| `adapter/openai` | OpenAI embedding adapter; works against any OpenAI-compatible endpoint (local embedding servers) with optional nomic-style document/query task prefixes |
 | `adapter/ollama` | Native Ollama embedding adapter |
 | `adapter/jev` | Jev typed-evaluation adapter over an injected client |
 | `adapter/postgres`, `adapter/sqlite` | Persistent candidate-retrieval adapters |

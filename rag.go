@@ -109,7 +109,7 @@ func (a *App) searchQueries(ctx context.Context, queries []string, opts []Search
 	if err != nil {
 		return nil, err
 	}
-	request := embedding.Request{Inputs: nonblank}
+	request := embedding.Request{Inputs: nonblank, Kind: embedding.KindQuery}
 	embedded, err := a.embedder.Embed(ctx, request)
 	if err != nil {
 		return nil, err
