@@ -645,6 +645,42 @@ func TestTrimSpanToText_UTF8(t *testing.T) {
 	assert.Equal(t, "你好世界", source[start:end])
 }
 
+func TestTrimSpanToText_ClampsOutOfRangeSpan(t *testing.T) {
+	t.Parallel()
+
+	// End offsets beyond the source (e.g. drifted word byte offsets) must
+	// clamp instead of indexing out of range.
+	source := "hello world"
+	start, end := trimSpanToText(source, "hello world", 0, len(source)+7)
+	assert.Equal(t, "hello world", source[start:end])
+}
+
+func TestSplitIntoWords_ByteExactWithInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	// Invalid UTF-8 bytes must round-trip through splitIntoWords unchanged;
+	// re-encoding them as U+FFFD would inflate the cumulative byte offsets.
+	text := "caf\xe9 \x80\x80 na\xefve end"
+	words := splitIntoWords(text)
+	assert.Equal(t, text, strings.Join(words, ""))
+}
+
+func TestWordBoundaryChunker_InvalidUTF8DoesNotPanic(t *testing.T) {
+	t.Parallel()
+
+	// Regression for the sem panic: wordByteStarts drifted past len(text)
+	// when invalid UTF-8 bytes were re-encoded during splitting, and
+	// trimSpanToText indexed past the end of the source. With multiple
+	// invalid bytes and multiple chunks, spans must stay in bounds.
+	text := "h\xe9llo \x80 w\xf6rld " + strings.Repeat("w\xf6rd ", 40)
+	chunks := newWordBoundaryChunker().Chunk(text, 12, 2)
+	require.NotEmpty(t, chunks)
+	for _, c := range chunks {
+		assert.GreaterOrEqual(t, c.StartChar, 0)
+		assert.LessOrEqual(t, c.EndChar, len(text))
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Slice 2 hard-cut span tests
 // ---------------------------------------------------------------------------

@@ -30,16 +30,21 @@ func splitIntoWords(text string) []string {
 	var words []string
 	var currentWord strings.Builder
 
-	for _, r := range text {
+	for i := 0; i < len(text); {
+		r, w := utf8.DecodeRuneInString(text[i:])
 		if unicode.IsSpace(r) {
 			if currentWord.Len() > 0 {
 				words = append(words, currentWord.String())
 				currentWord.Reset()
 			}
-			words = append(words, string(r))
+			// Preserve the original bytes verbatim: re-encoding r would not
+			// be byte-exact when the input contains invalid UTF-8, and the
+			// cumulative word byte lengths must keep summing to len(text).
+			words = append(words, text[i:i+w])
 		} else {
-			currentWord.WriteRune(r)
+			currentWord.WriteString(text[i : i+w])
 		}
+		i += w
 	}
 
 	if currentWord.Len() > 0 {
@@ -162,8 +167,15 @@ func runeByteOffsets(text string, n int) []int {
 
 // trimSpanToText adjusts a byte span [rawStart, rawEnd) in source so that
 // source[adjustedStart:adjustedEnd] == target. It skips leading/trailing
-// whitespace to match strings.TrimSpace semantics.
+// whitespace to match strings.TrimSpace semantics. Spans outside source
+// are clamped to its bounds; the function never panics.
 func trimSpanToText(source, target string, rawStart, rawEnd int) (int, int) {
+	if rawStart < 0 {
+		rawStart = 0
+	}
+	if rawEnd > len(source) {
+		rawEnd = len(source)
+	}
 	for rawStart < rawEnd && rawStart < len(source) && (source[rawStart] == ' ' || source[rawStart] == '\n' || source[rawStart] == '\t' || source[rawStart] == '\r') {
 		rawStart++
 	}
