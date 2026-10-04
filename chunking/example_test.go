@@ -24,3 +24,11 @@ func ExampleCJKThaiSeparatorProfile() {
 	fmt.Println(profile.ID, len(separators) > len(chunking.DefaultTextSeparatorProfile().Separators))
 	// Output: cjk_thai true
 }
+
+func ExampleNewRecursiveChunker() {
+	chunker := chunking.NewRecursiveChunker(chunking.DefaultTextSeparatorProfile())
+
+	chunks := chunker.Chunk("First paragraph.\n\nSecond paragraph.", 20, 0)
+	fmt.Println(len(chunks), chunks[0].Text)
+	// Output: 2 First paragraph.
+}

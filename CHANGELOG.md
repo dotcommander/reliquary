@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.13.0 (2026-10-04)
+
+### Added
+
+- Add the `recursive` chunking strategy: LangChain
+  RecursiveCharacterTextSplitter-style cascade splitting over ordered
+  `SeparatorProfile` separators, with greedy merge, rune-tail overlap, and
+  verbatim source spans. `NewRecursiveChunker` accepts custom profiles
+  (including CJK/Thai).
+- Add `BatchEmbedderFromEmbedder`, adapting the provider-neutral
+  `embedding.Embedder` contract to the `BatchEmbedder` seam consumed by
+  `NewSemanticChunker`.
+
 ## v0.12.1 (2026-08-29)
 
 ### Fixed

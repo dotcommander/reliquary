@@ -30,6 +30,14 @@
 // for structural parsing. Headings inside fenced code blocks are never
 // detected as heading boundaries — fence-gating is structural, not stateful.
 //
+// # Recursive splitting
+//
+// The Recursive strategy (NewRecursiveChunker) splits text by applying an
+// ordered SeparatorProfile from broad to narrow, LangChain
+// RecursiveCharacterTextSplitter-style, and merges pieces back while they
+// fit the size budget. The CJK/Thai profile exists for scripts that lack
+// whitespace word boundaries.
+//
 // # Offset helpers
 //
 //   - LineForOffset: converts a byte offset to a 1-based line number

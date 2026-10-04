@@ -48,6 +48,7 @@ const (
 	ParagraphAware   Strategy = "paragraph_aware"
 	HardCut          Strategy = "hard_cut"
 	TokenBased       Strategy = "token_based"
+	Recursive        Strategy = "recursive"
 	Semantic         Strategy = "semantic"
 )
 
@@ -82,6 +83,8 @@ func NewChunker(strategy Strategy) (Chunker, error) {
 		return NewOptimalChunker(), nil
 	case TokenBased:
 		return newTokenBasedChunker(), nil
+	case Recursive:
+		return newRecursiveChunker(), nil
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnknownStrategy, strategy)
 	}

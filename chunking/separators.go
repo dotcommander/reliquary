@@ -1,8 +1,8 @@
 package chunking
 
 // SeparatorProfile names an ordered list of separators for recursive text
-// splitting. The package provides pure profile data only; callers own the
-// splitting algorithm that consumes it.
+// splitting. The package's profiles feed NewRecursiveChunker; callers may
+// supply their own ordered profiles the same way.
 type SeparatorProfile struct {
 	ID         string
 	Separators []string
