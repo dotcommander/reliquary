@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"testing"
 	"testing/synctest"
@@ -330,7 +331,10 @@ func TestFingerprintScore(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
+			// Clone the context slice: parallel subtests mutate index 0, and a
+			// shallow copy of base would share the backing array with siblings.
 			request := base
+			request.Context = slices.Clone(base.Context)
 			test.mutate(&request)
 			other := FingerprintScore(request)
 			if test.name == "identical request" {
@@ -363,7 +367,10 @@ func TestFingerprintNoul(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
+			// Clone the context slice: parallel subtests mutate index 0, and a
+			// shallow copy of base would share the backing array with siblings.
 			request := base
+			request.Context = slices.Clone(base.Context)
 			test.mutate(&request)
 			other := FingerprintNoul(request)
 			if test.name == "identical request" {
@@ -528,7 +535,7 @@ func TestTTLEvictionWithCallerConfiguredLifetime(t *testing.T) {
 	t.Parallel()
 
 	synctest.Test(t, func(t *testing.T) {
-		store, err := New(WithTTL(30 * time.Minute), WithDisableTouchOnHit())
+		store, err := New(WithTTL(30*time.Minute), WithDisableTouchOnHit())
 		if err != nil {
 			t.Fatalf("New unexpected error: %v", err)
 		}
