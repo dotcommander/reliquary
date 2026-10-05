@@ -8,8 +8,7 @@ import (
 )
 
 const (
-	contentHashAlgo = "sha256"
-	contentHashLen  = 8 // bytes before hex encoding (16 hex chars)
+	contentHashLen = 8 // bytes before hex encoding (16 hex chars)
 )
 
 // Chunk represents a segment of text produced by a chunking strategy.

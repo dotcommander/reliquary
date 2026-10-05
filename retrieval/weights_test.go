@@ -48,7 +48,7 @@ func TestScorerScoreUsesRawWeights(t *testing.T) {
 	scorer := NewScorerWithOptions(DefaultWeights(), false)
 
 	// "alpha" and "bravo" are each >2 chars and not stopwords, so tokenize produces
-	// both tokens. keywordOverlap("alpha bravo", "alpha bravo") = 1.0.
+	// both tokens. overlapRatio("alpha bravo", "alpha bravo") = 1.0.
 	query := "alpha bravo"
 	result := &Result{
 		Content:   "alpha bravo",

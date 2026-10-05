@@ -5,10 +5,6 @@ import (
 	"unicode"
 )
 
-func keywordOverlap(query, content string) float64 {
-	return overlapRatio(tokenize(query), tokenize(content))
-}
-
 func FilenameOverlap(filename, categoryName string) float64 {
 	return overlapRatio(tokenize(filename), tokenize(categoryName))
 }
