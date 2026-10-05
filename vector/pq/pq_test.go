@@ -112,13 +112,16 @@ func TestNewQuantizerInvalidConfig(t *testing.T) {
 	}
 }
 
-// generateRandomVectors creates random vectors for testing.
+// generateRandomVectors creates random vectors for testing. The source is
+// deterministically seeded per call so parallel tests share nothing and the
+// data is identical on every run.
 func generateRandomVectors(n, dim int) [][]float32 {
+	rng := rand.New(rand.NewPCG(42, 42))
 	vectors := make([][]float32, n)
 	for i := range vectors {
 		vectors[i] = make([]float32, dim)
 		for j := range vectors[i] {
-			vectors[i][j] = rand.Float32()*2 - 1 // [-1, 1]
+			vectors[i][j] = rng.Float32()*2 - 1 // [-1, 1]
 		}
 	}
 	return vectors
@@ -126,12 +129,13 @@ func generateRandomVectors(n, dim int) [][]float32 {
 
 // generateClusteredVectors creates vectors clustered around centers.
 func generateClusteredVectors(nClusters, pointsPerCluster, dim int) [][]float32 {
+	rng := rand.New(rand.NewPCG(42, 42))
 	// Generate cluster centers
 	centers := make([][]float32, nClusters)
 	for i := range centers {
 		centers[i] = make([]float32, dim)
 		for j := range centers[i] {
-			centers[i][j] = rand.Float32()*10 - 5 // [-5, 5]
+			centers[i][j] = rng.Float32()*10 - 5 // [-5, 5]
 		}
 	}
 
@@ -141,7 +145,7 @@ func generateClusteredVectors(nClusters, pointsPerCluster, dim int) [][]float32 
 		for p := 0; p < pointsPerCluster; p++ {
 			vec := make([]float32, dim)
 			for j := range vec {
-				vec[j] = center[j] + rand.Float32()*0.5 - 0.25 // Small noise
+				vec[j] = center[j] + rng.Float32()*0.5 - 0.25 // Small noise
 			}
 			vectors = append(vectors, vec)
 		}
