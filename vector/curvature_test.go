@@ -143,3 +143,17 @@ func assertFloat32InDeltaf(t *testing.T, got, want, delta float32, format string
 func sprintf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
 }
+
+func TestFindElbowCurvatureNegativeMinKeep(t *testing.T) {
+	t.Parallel()
+	for _, scores := range [][]float32{nil, {}, {1}, {1, 0.9, 0.8, 0.2, 0.1}} {
+		got := FindElbowCurvature(scores, -3)
+		want := FindElbowCurvature(scores, 0)
+		if got != want {
+			t.Fatalf("scores %v: negative minKeep = %d, zero = %d", scores, got, want)
+		}
+		if len(scores) == 0 && got != -1 {
+			t.Fatalf("empty scores: got %d, want -1", got)
+		}
+	}
+}

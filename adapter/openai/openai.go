@@ -15,6 +15,8 @@ import (
 const (
 	defaultModel      = "text-embedding-3-small"
 	defaultDimensions = 1536
+	adaModel          = "text-embedding-ada-002"
+	adaDimensions     = 1536
 )
 
 // Config configures embedding request defaults.
@@ -53,6 +55,9 @@ func New(client openaisdk.Client, cfg Config) (*Embedder, error) {
 	if cfg.Dimensions < 1 {
 		return nil, fmt.Errorf("openai adapter: dimensions must be positive")
 	}
+	if cfg.Model == adaModel && cfg.Dimensions != adaDimensions {
+		return nil, fmt.Errorf("openai adapter: %s requires %d dimensions", adaModel, adaDimensions)
+	}
 	return &Embedder{client: client, model: cfg.Model, dims: cfg.Dimensions, docPrefix: cfg.DocumentPrefix, queryPrefix: cfg.QueryPrefix}, nil
 }
 
@@ -63,7 +68,12 @@ func (e *Embedder) Embed(ctx context.Context, request embeddingcontract.Request)
 	if model.Name == "" {
 		model.Name = e.model
 	}
-	if model.Dim == 0 {
+	if model.Name == adaModel {
+		if model.Dim != 0 && model.Dim != adaDimensions {
+			return embeddingcontract.Result{}, fmt.Errorf("openai adapter: %s requires %d dimensions", adaModel, adaDimensions)
+		}
+		model.Dim = adaDimensions
+	} else if model.Dim == 0 {
 		model.Dim = e.dims
 	}
 	if model.Dim < 1 {
@@ -81,11 +91,15 @@ func (e *Embedder) Embed(ctx context.Context, request embeddingcontract.Request)
 	for i, input := range request.Inputs {
 		inputs[i] = prefix + strings.ReplaceAll(input, "\n", " ")
 	}
-	response, err := e.client.Embeddings.New(ctx, openaisdk.EmbeddingNewParams{
-		Input:      openaisdk.EmbeddingNewParamsInputUnion{OfArrayOfStrings: inputs},
-		Model:      openaisdk.EmbeddingModel(model.Name),
-		Dimensions: openaisdk.Int(int64(model.Dim)),
-	})
+	params := openaisdk.EmbeddingNewParams{
+		Input: openaisdk.EmbeddingNewParamsInputUnion{OfArrayOfStrings: inputs},
+		Model: openaisdk.EmbeddingModel(model.Name),
+	}
+	// Ada uses its native width; only v3 and later support the dimensions field.
+	if model.Name != adaModel {
+		params.Dimensions = openaisdk.Int(int64(model.Dim))
+	}
+	response, err := e.client.Embeddings.New(ctx, params)
 	if err != nil {
 		return embeddingcontract.Result{}, fmt.Errorf("openai adapter: embed: %w", err)
 	}

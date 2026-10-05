@@ -2,6 +2,7 @@ package lexical
 
 import (
 	"cmp"
+	"math"
 	"slices"
 )
 
@@ -151,7 +152,7 @@ type FusionInput struct {
 
 // FusionOptions configures reciprocal-rank fusion.
 type FusionOptions struct {
-	// K is the RRF rank constant. Values <= 0 use 60.
+	// K is the RRF rank constant. Nonpositive or nonfinite values use 60.
 	K float64
 	// Limit caps returned candidates. Values <= 0 return all candidates.
 	Limit int
@@ -161,7 +162,7 @@ type FusionOptions struct {
 // fusion. Duplicate IDs within one input list contribute only their first rank.
 func FuseRRFByID(inputs []FusionInput, options FusionOptions) RankedList {
 	k := options.K
-	if k <= 0 {
+	if k <= 0 || math.IsNaN(k) || math.IsInf(k, 0) {
 		k = 60
 	}
 

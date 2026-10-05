@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/retrieval"
@@ -21,6 +22,7 @@ type Factory func() indexcontract.Index
 // Run exercises the behavior required of every Index implementation.
 func Run(t *testing.T, newIndex Factory) {
 	t.Helper()
+	runTextContract(t, newIndex)
 
 	t.Run("upsert overwrite and latest value", func(t *testing.T) {
 		idx := newIndex()
@@ -528,4 +530,56 @@ func resultIDs(results []*retrieval.Result) string {
 		ids += "," + result.ID
 	}
 	return ids
+}
+
+// runTextContract deliberately requires no query vector or scoring formula.
+func runTextContract(t *testing.T, newIndex Factory) {
+	t.Helper()
+	for _, tc := range []struct {
+		name   string
+		mixed  bool
+		filter map[string]any
+	}{
+		{name: "text-only ranks before limit"},
+		{name: "text-only filters before ranking", filter: map[string]any{"tenant": "allowed"}},
+		{name: "text-only ranks mixed embedded and unembedded candidates", mixed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			t.Cleanup(cancel)
+			idx := newIndex()
+			items := []*retrieval.Result{
+				{ID: "a", Content: "unrelated material", Metadata: map[string]any{"tenant": "allowed"}},
+				{ID: "z", Content: "quartz beacon", Metadata: map[string]any{"tenant": "allowed"}},
+			}
+			if tc.filter != nil {
+				items = append(items, &retrieval.Result{ID: "b", Content: "quartz beacon", Metadata: map[string]any{"tenant": "denied"}})
+			}
+			if tc.mixed {
+				items[0].Embedding = []float64{1, 0}
+			}
+			if err := idx.Upsert(ctx, items); err != nil {
+				t.Fatal(err)
+			}
+			got, err := idx.Search(ctx, indexcontract.IndexQuery{Text: "quartz beacon", Limit: 1, Filter: tc.filter})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].ID != "z" {
+				t.Fatalf("text-only winner = %s, want z", resultIDs(got))
+			}
+			if tc.filter != nil {
+				got, err = idx.Search(ctx, indexcontract.IndexQuery{Text: "quartz beacon", Filter: tc.filter})
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, item := range got {
+					if item.Metadata["tenant"] != "allowed" {
+						t.Fatalf("disallowed candidate returned: %s", item.ID)
+					}
+				}
+			}
+		})
+	}
 }

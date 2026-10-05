@@ -52,10 +52,13 @@ func BM25Score(query Query, doc DocumentStats, corpus CorpusStats, params BM25Pa
 
 func normalizeBM25Params(params BM25Params) BM25Params {
 	defaults := DefaultBM25Params()
+	if params == (BM25Params{}) {
+		return defaults
+	}
 	if params.K1 <= 0 {
 		params.K1 = defaults.K1
 	}
-	if params.B < 0 || params.B > 1 || params.B == 0 {
+	if params.B < 0 || params.B > 1 {
 		params.B = defaults.B
 	}
 	return params

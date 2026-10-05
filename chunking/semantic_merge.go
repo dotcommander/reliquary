@@ -74,7 +74,7 @@ type semanticGroup struct {
 
 // mergeAdjacentSimilarGroups merges adjacent groups whose cosine similarity
 // exceeds the threshold. Merged embeddings are L2-normalized.
-func mergeAdjacentSimilarGroups(groups []semanticGroup, threshold float64) []semanticGroup {
+func mergeAdjacentSimilarGroups(groups []semanticGroup, threshold float64, limits ...int) []semanticGroup {
 	if len(groups) <= 1 {
 		return groups
 	}
@@ -87,7 +87,8 @@ func mergeAdjacentSimilarGroups(groups []semanticGroup, threshold float64) []sem
 		prev := &merged[len(merged)-1]
 
 		sim := cosineSimilarity(prev.embedding, curr.embedding)
-		if sim >= threshold && prev.embedding != nil && curr.embedding != nil {
+		withinLimit := len(limits) == 0 || limits[0] <= 0 || utf8.RuneCountInString(prev.text)+1+utf8.RuneCountInString(curr.text) <= limits[0]
+		if withinLimit && sim >= threshold && prev.embedding != nil && curr.embedding != nil {
 			// Merge current into previous.
 			prev.text = prev.text + " " + curr.text
 			oldWeight := prev.weight
@@ -115,7 +116,7 @@ func mergeAdjacentSimilarGroups(groups []semanticGroup, threshold float64) []sem
 // mergeAdjacentGroups converts text groups into semanticGroups with their
 // embedding representatives, runs adjacent merge, and returns the merged
 // group texts.
-func mergeAdjacentGroups(units []textSpan, groups []string, embeddings [][]float32, threshold float64, originalText string) []string {
+func mergeAdjacentGroups(units []textSpan, groups []string, embeddings [][]float32, threshold float64, originalText string, limits ...int) []string {
 	if len(groups) <= 1 || len(embeddings) == 0 {
 		return groups
 	}
@@ -174,7 +175,7 @@ func mergeAdjacentGroups(units []textSpan, groups []string, embeddings [][]float
 		}
 	}
 
-	merged := mergeAdjacentSimilarGroups(semGroups, threshold)
+	merged := mergeAdjacentSimilarGroups(semGroups, threshold, limits...)
 	result := make([]string, len(merged))
 	for i, g := range merged {
 		result[i] = g.text

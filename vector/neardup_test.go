@@ -185,3 +185,24 @@ func TestNearDuplicate_DegenerateInputs(t *testing.T) {
 		t.Fatalf("pairs[0] = %#v, want [0 3]", pairs[0])
 	}
 }
+
+func TestNearDuplicatePairsSkipsMismatchedDimensions(t *testing.T) {
+	t.Parallel()
+	vecs := [][]float32{nil, {}, {1}, {1, 0}, {2, 0}, {-1, 0}}
+	for _, tc := range []struct {
+		threshold float32
+		want      [][2]int
+		groups    [][]int
+	}{
+		{0.9, [][2]int{{3, 4}}, [][]int{{3, 4}}},
+		{0, [][2]int{{3, 4}}, [][]int{{3, 4}}},
+		{-1, [][2]int{{3, 4}, {3, 5}, {4, 5}}, [][]int{{3, 4, 5}}},
+	} {
+		if got := NearDuplicatePairs(vecs, tc.threshold); !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("threshold=%v: pairs = %v, want %v", tc.threshold, got, tc.want)
+		}
+		if got := NearDuplicateGroups(vecs, tc.threshold); !reflect.DeepEqual(got, tc.groups) {
+			t.Fatalf("threshold=%v: groups = %v, want %v", tc.threshold, got, tc.groups)
+		}
+	}
+}

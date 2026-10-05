@@ -3,6 +3,7 @@ package chunking
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 var (
@@ -78,7 +79,7 @@ func semanticUnits(text string) []textSpan {
 	return splitIntoSentencesWithSpans(text)
 }
 
-func semanticUnitsFromPublic(units []SemanticUnit) ([]textSpan, []string) {
+func semanticUnitsFromPublic(units []SemanticUnit, sources ...string) ([]textSpan, []string) {
 	if len(units) == 0 {
 		return nil, nil
 	}
@@ -88,10 +89,19 @@ func semanticUnitsFromPublic(units []SemanticUnit) ([]textSpan, []string) {
 		if strings.TrimSpace(u.Text) == "" {
 			continue
 		}
-		if u.StartChar < 0 || u.EndChar <= u.StartChar {
-			u.StartChar = 0
-			u.EndChar = 0
+		trimmed := strings.TrimSpace(u.Text)
+		leadingBytes := len(u.Text) - len(strings.TrimLeftFunc(u.Text, unicode.IsSpace))
+		valid := u.StartChar >= 0 && u.EndChar > u.StartChar && u.EndChar-u.StartChar == len(u.Text)
+		if valid && len(sources) > 0 {
+			valid = u.EndChar <= len(sources[0]) && sources[0][u.StartChar:u.EndChar] == u.Text
 		}
+		if valid {
+			u.StartChar += leadingBytes
+			u.EndChar = u.StartChar + len(trimmed)
+		} else {
+			u.StartChar, u.EndChar = 0, 0
+		}
+		u.Text = trimmed
 		spans = append(spans, textSpan{text: u.Text, start: u.StartChar, end: u.EndChar})
 		texts = append(texts, u.Text)
 	}
@@ -322,6 +332,8 @@ func buildSemanticChunks(units []textSpan, groups []string, originalText string)
 				src := originalText[spanStart:spanEnd]
 				cleaned := strings.TrimSpace(src)
 				if cleaned == g {
+					spanStart += len(src) - len(strings.TrimLeftFunc(src, unicode.IsSpace))
+					spanEnd = spanStart + len(g)
 					chunks[i] = buildChunkWithSpan(i, g, spanStart, spanEnd)
 					continue
 				}

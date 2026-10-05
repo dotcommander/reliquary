@@ -3,6 +3,7 @@ package chunking
 import (
 	"bytes"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -48,6 +49,20 @@ func extractMarkdownBlocks(src []byte) []markdownBlock {
 		source: src,
 	}
 	ast.Walk(doc, extractor.visit)
+	for i := range extractor.blocks {
+		block := &extractor.blocks[i]
+		if block.metadata == nil {
+			block.metadata = make(map[string]string)
+		}
+		block.metadata["type"] = block.blockType
+		if _, ok := block.metadata[metaKeyWordCount]; !ok {
+			content := block.text
+			if block.blockType == "heading" {
+				content = strings.TrimLeft(content, "# ")
+			}
+			block.metadata[metaKeyWordCount] = strconv.Itoa(len(strings.Fields(content)))
+		}
+	}
 	return extractor.blocks
 }
 
@@ -164,26 +179,14 @@ func (be *blockExtractor) extractCode(n *ast.FencedCodeBlock) {
 	}
 	fullText := "```" + langStr + "\n" + content + "```"
 
-	// Extend byte span to include fence markers.
 	start, end := nodeByteSpan(n)
-	// Scan backwards from content start to find opening fence.
-	if start > 0 {
-		for start > 0 && be.source[start-1] != '`' {
-			start--
-		}
-		for start > 0 && be.source[start-1] == '`' {
-			start--
-		}
-	}
-	// Scan forward from content end to find closing fence.
-	for end < len(be.source) && be.source[end] != '`' {
-		end++
-	}
-	for end < len(be.source) && be.source[end] == '`' {
-		end++
-	}
-	if end < len(be.source) && be.source[end] == '\n' {
-		end++
+	if sourceStart, sourceEnd, ok := fencedCodeSourceSpan(be.source, start, end); ok {
+		start, end = sourceStart, sourceEnd
+		fullText = string(be.source[start:end])
+	} else {
+		// Goldmark can normalize indentation or nested block prefixes. Keep
+		// reconstructed text, but do not claim source offsets in that case.
+		start, end = 0, 0
 	}
 
 	trimmedContent := strings.TrimRight(content, "\n")
@@ -281,4 +284,69 @@ func (be *blockExtractor) extractBlockquote(n *ast.Blockquote) {
 		endByte:   end,
 		metadata:  nil,
 	})
+}
+
+// fencedCodeSourceSpan inspects only the lines immediately surrounding the
+// AST content. It never searches backwards into an unrelated fenced block.
+func fencedCodeSourceSpan(source []byte, contentStart, contentEnd int) (int, int, bool) {
+	if contentStart <= 0 || contentEnd < contentStart || contentEnd > len(source) {
+		return 0, 0, false
+	}
+	contentLine := bytes.LastIndexByte(source[:contentStart], '\n') + 1
+	if contentLine == 0 {
+		return 0, 0, false
+	}
+	openingEnd := contentLine - 1
+	openingStart := bytes.LastIndexByte(source[:openingEnd], '\n') + 1
+	opening := strings.TrimRight(string(source[openingStart:openingEnd]), "\r")
+	marker, count, _, ok := markdownFenceLine(opening)
+	if !ok {
+		return 0, 0, false
+	}
+
+	closingStart := contentEnd
+	if closingStart > 0 && source[closingStart-1] != '\n' {
+		// A final content line without a newline belongs to an unclosed fence.
+		if closingStart != len(source) {
+			return 0, 0, false
+		}
+	}
+	end := contentEnd
+	if closingStart < len(source) {
+		closingEnd := closingStart
+		for closingEnd < len(source) && source[closingEnd] != '\n' {
+			closingEnd++
+		}
+		closing := strings.TrimRight(string(source[closingStart:closingEnd]), "\r")
+		closeMarker, closeCount, rest, valid := markdownFenceLine(closing)
+		if !valid || closeMarker != marker || closeCount < count || strings.TrimSpace(rest) != "" {
+			return 0, 0, false
+		}
+		end = closingEnd
+	}
+	start := openingStart
+	// Chunk text is trimmed by the common emission helper; trim its span too.
+	raw := string(source[start:end])
+	trimmed := strings.TrimSpace(raw)
+	start += strings.Index(raw, trimmed)
+	return start, start + len(trimmed), true
+}
+
+func markdownFenceLine(line string) (byte, int, string, bool) {
+	indent := 0
+	for indent < len(line) && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent >= len(line) || (line[indent] != '`' && line[indent] != '~') {
+		return 0, 0, "", false
+	}
+	marker := line[indent]
+	end := indent
+	for end < len(line) && line[end] == marker {
+		end++
+	}
+	if end-indent < 3 {
+		return 0, 0, "", false
+	}
+	return marker, end - indent, line[end:], true
 }

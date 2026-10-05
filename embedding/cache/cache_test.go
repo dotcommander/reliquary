@@ -69,9 +69,9 @@ func TestCacheKeyGolden(t *testing.T) {
 		name, identity, input, want string
 		model                       embedding.ModelRef
 	}{
-		{"exact input", "namespace", "input", "1d135e623437b225814ab15fa39689821f49e60daa024f8c4873d1a5709fe563", model},
-		{"unicode byte framing", "aé", "é", "d980c9fffa5abfb64eb81caaa10f93ad776329e67b48192dcbc51a32a367b298", model},
-		{"zero model", "x", "", "45606cda8b0cde025f459d15c89f810e79842de0f803da2da880f3f876a4a6db", embedding.ModelRef{}},
+		{"exact input", "namespace", "input", "e65c021936b7904de6f3c7e6e518589844ae85698af86b9003f325c48ed07656", model},
+		{"unicode byte framing", "aé", "é", "fbe56cbdc1af42f6fa2b135f0b816c04c091ef763dcee0a9aaa8d51c1f5fe857", model},
+		{"zero model", "x", "", "4cea6ec22aca4161b39027edd671371fcb3ad597d4b4cd0c9cf1d6d524f2e121", embedding.ModelRef{}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

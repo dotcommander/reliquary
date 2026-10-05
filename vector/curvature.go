@@ -73,6 +73,9 @@ func Gradient(scores []float32) []float32 {
 // the search for the peak starts at minKeep so we never cut before that point.
 // Returns len(scores)-1 when no meaningful peak is found (flat or trivially short).
 func FindElbowCurvature(scores []float32, minKeep int) int {
+	if minKeep < 0 {
+		minKeep = 0
+	}
 	n := len(scores)
 	if n <= minKeep {
 		return n - 1

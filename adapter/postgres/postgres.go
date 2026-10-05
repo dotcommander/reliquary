@@ -11,16 +11,33 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/internal/indexutil"
 	"github.com/dotcommander/reliquary/retrieval"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	pgvector "github.com/pgvector/pgvector-go"
 )
 
 const defaultTable = "reliquary_index"
+
+// rollbackTimeout bounds resource cleanup independently of the caller operation.
+const rollbackTimeout = 5 * time.Second
+
+type transactionPool interface {
+	Begin(context.Context) (pgx.Tx, error)
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+func rollback(ctx context.Context, tx pgx.Tx) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), rollbackTimeout)
+	defer cancel()
+	_ = tx.Rollback(cleanupCtx)
+}
 
 // Config controls PostgreSQL index storage. Migrate must be called explicitly
 // before the index is used.
@@ -30,7 +47,7 @@ type Config struct {
 
 // Index stores retrieval candidates in a caller-owned PostgreSQL pool.
 type Index struct {
-	pool        *pgxpool.Pool
+	pool        transactionPool
 	table       string
 	quoted      string
 	stateTable  string
@@ -65,7 +82,7 @@ func (i *Index) Migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin postgres index migration: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	query := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		id text PRIMARY KEY,
 		document_id text NOT NULL DEFAULT '',
@@ -106,7 +123,7 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 	if err != nil {
 		return fmt.Errorf("begin postgres index upsert: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE`, i.quoted)); err != nil {
 		return fmt.Errorf("lock postgres index identity: %w", err)
 	}
@@ -162,7 +179,7 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 	if err != nil {
 		return fmt.Errorf("begin postgres index replacement: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE`, i.quoted)); err != nil {
 		return fmt.Errorf("lock postgres index replacement: %w", err)
 	}
@@ -256,7 +273,7 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 	if err != nil {
 		return fmt.Errorf("begin postgres index delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = $1`, i.quoted), documentID); err != nil {
 		return fmt.Errorf("delete postgres index document %q: %w", documentID, err)
 	}
@@ -272,7 +289,7 @@ func (i *Index) Reset(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("begin postgres index reset: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s`, i.quoted)); err != nil {
 		return fmt.Errorf("reset postgres index: %w", err)
 	}
@@ -286,7 +303,9 @@ func (i *Index) Reset(ctx context.Context) error {
 }
 
 // Search retrieves candidates in PostgreSQL and performs final Reliquary
-// scoring over only that bounded candidate set.
+// scoring. Text-only queries read every filter-matching row before lexical ranking,
+// so their read and memory cost grows with the matching corpus. Vector queries
+// retain the SQL candidate bound.
 func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -298,7 +317,7 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 	if err != nil {
 		return nil, fmt.Errorf("begin postgres index search: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer rollback(ctx, tx)
 	space, err := i.readState(ctx, tx)
 	if err != nil {
 		return nil, err
@@ -473,7 +492,7 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 		statement += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	statement += ` ORDER BY ` + order
-	if query.Limit > 0 {
+	if query.Limit > 0 && len(query.Vector) > 0 {
 		args = append(args, query.Limit)
 		statement += fmt.Sprintf(` LIMIT $%d`, len(args))
 	}

@@ -68,13 +68,20 @@ func TestRecursive_ParagraphCascade(t *testing.T) {
 func TestRecursive_WordCascade(t *testing.T) {
 	t.Parallel()
 	c := newRecursiveChunker()
-	chunks := c.Chunk("alpha beta gamma delta epsilon zeta", 12, 0)
+	const text = "alpha beta gamma delta epsilon zeta"
+	chunks := c.Chunk(text, 12, 0)
 
-	require.Len(t, chunks, 4)
+	require.Len(t, chunks, 3)
 	assert.Equal(t, "alpha beta", chunks[0].Text)
 	assert.Equal(t, "gamma delta", chunks[1].Text)
-	assert.Equal(t, "epsilon", chunks[2].Text)
-	assert.Equal(t, "zeta", chunks[3].Text)
+	// Restarting at the next leaf excludes the preceding separator, so
+	// these two words fit the full 12-rune budget together.
+	assert.Equal(t, "epsilon zeta", chunks[2].Text)
+	for _, ch := range chunks {
+		assert.LessOrEqual(t, ch.CharCount, 12)
+		require.Greater(t, ch.EndChar, ch.StartChar)
+		assert.Equal(t, ch.Text, text[ch.StartChar:ch.EndChar])
+	}
 }
 
 func TestRecursive_OverlapSharesTailRunes(t *testing.T) {

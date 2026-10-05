@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/dotcommander/reliquary/embedding"
+	"github.com/dotcommander/reliquary/internal/validate"
 )
 
 // BatchEmbedderFromEmbedder adapts the provider-neutral embedding.Embedder
@@ -27,7 +28,7 @@ type embedderBridge struct {
 // EmbedBatch embeds texts through the wrapped Embedder, preserving input
 // order. Empty batches short-circuit to nil, nil.
 func (b *embedderBridge) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
-	if b.embedder == nil {
+	if validate.IsNil(b.embedder) {
 		return nil, errors.New("chunking: batch embedder has no underlying embedding.Embedder")
 	}
 	if len(texts) == 0 {

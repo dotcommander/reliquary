@@ -36,7 +36,14 @@ func (p *paragraphAwareChunker) Chunk(text string, size int, overlap int) []Chun
 
 		// Add paragraphs until the rune-size limit is reached.
 		runeCount := utf8.RuneCountInString(currentChunk.String())
-		for i < len(paragraphs) && runeCount+utf8.RuneCountInString(paragraphs[i])+2 <= size {
+		for i < len(paragraphs) {
+			separator := 0
+			if currentChunk.Len() > 0 {
+				separator = 2
+			}
+			if runeCount+utf8.RuneCountInString(paragraphs[i])+separator > size {
+				break
+			}
 			if currentChunk.Len() > 0 {
 				currentChunk.WriteString("\n\n")
 				runeCount += 2
@@ -69,7 +76,7 @@ func (p *paragraphAwareChunker) Chunk(text string, size int, overlap int) []Chun
 		if chunkText != "" {
 			lastPara := i - 1
 			startChar, endChar := mergeParaSpans(paraSpans, firstPara, lastPara)
-			chunks = append(chunks, buildChunkWithSpan(chunkID, chunkText, startChar, endChar))
+			chunks = appendChunkIfValid(chunks, chunkID, chunkText, text, startChar, endChar)
 			chunkID++
 		}
 	}
@@ -95,15 +102,16 @@ func locateTextSpans(source string, fragments []string) []textSpan {
 
 // mergeParaSpans returns the byte range covering paragraphs [first, last].
 func mergeParaSpans(spans []textSpan, first, last int) (int, int) {
-	if first >= len(spans) || last >= len(spans) {
+	if first < 0 || last < first || first >= len(spans) || last >= len(spans) {
 		return 0, 0
+	}
+	for i := first; i <= last; i++ {
+		if spans[i].start < 0 || spans[i].end <= spans[i].start {
+			return 0, 0
+		}
 	}
 	start := spans[first].start
 	end := spans[last].end
-	// If any span is unknown, the merged span is unknown.
-	if start == 0 && end == 0 {
-		return 0, 0
-	}
 	return start, end
 }
 

@@ -1,7 +1,9 @@
 package chunking
 
 import (
+	"maps"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -33,95 +35,82 @@ func (m *markdownAwareChunker) Chunk(text string, size int, overlap int) []Chunk
 	}
 
 	var chunks []Chunk
-	chunkID := 0
 	current := ""
 	currentStart, currentEnd := 0, 0
-	currentMeta := map[string]string(nil) // metadata for single-block accumulation
-	singleBlock := true                   // whether current accumulation is a single block
+	currentType := ""
+	var currentMeta map[string]string
 
-	for _, blk := range mdBlocks {
-		block := blk.text
-		candidate := block
-		if current != "" {
-			candidate = current + "\n\n" + block
-		}
-
-		if utf8.RuneCountInString(candidate) <= size {
-			current = candidate
-			if current == block {
-				currentStart = blk.startByte
-				currentEnd = blk.endByte
-				currentMeta = blk.metadata
-			} else {
-				currentEnd = blk.endByte
-				currentMeta = nil // merged blocks lose metadata
-				singleBlock = false
-			}
-			continue
-		}
-
-		// Emit the accumulated block.
-		if current != "" {
-			prevLen := len(chunks)
-			chunks = appendChunkIfValid(chunks, chunkID, current, text, currentStart, currentEnd)
-			if len(chunks) > prevLen {
-				if singleBlock {
-					chunks[len(chunks)-1].Metadata = currentMeta
-				}
-				chunkID++
-			}
-		}
-
-		// If the single block fits, start a new accumulation.
-		if utf8.RuneCountInString(block) <= size {
-			current = block
-			currentStart = blk.startByte
-			currentEnd = blk.endByte
-			currentMeta = blk.metadata
-			singleBlock = true
-			continue
-		}
-
-		// Block exceeds size — try table-aware splitting first.
-		if tableParts, ok := splitMarkdownTableBlock(block, size); ok {
-			for _, tp := range tableParts {
-				chunks = append(chunks, buildChunk(chunkID, tp))
-				chunkID++
-			}
-			current = ""
-			currentStart = 0
-			currentEnd = 0
-			currentMeta = nil
-			singleBlock = true
-			continue
-		}
-
-		// Block exceeds size — fall back to word-boundary splitting.
-		wordChunker := newWordBoundaryChunker()
-		sub := wordChunker.Chunk(block, size, overlap)
-		// Rebase sub-chunk spans from block-relative to original-text-relative.
-		sub = adjustChunkSpans(sub, blk.startByte)
-		for _, sc := range sub {
-			sc.ID = chunkID
-			chunks = append(chunks, sc)
-			chunkID++
+	flush := func() {
+		previous := len(chunks)
+		chunks = appendChunkIfValid(chunks, previous, current, text, currentStart, currentEnd)
+		if len(chunks) > previous {
+			chunks[len(chunks)-1].Metadata = currentMeta
 		}
 		current = ""
-		currentStart = 0
-		currentEnd = 0
+		currentStart, currentEnd = 0, 0
+		currentType = ""
 		currentMeta = nil
-		singleBlock = true
 	}
 
-	if strings.TrimSpace(current) != "" {
-		prevLen := len(chunks)
-		chunks = appendChunkIfValid(chunks, chunkID, current, text, currentStart, currentEnd)
-		if len(chunks) > prevLen {
-			if singleBlock {
-				chunks[len(chunks)-1].Metadata = currentMeta
+	for _, blk := range mdBlocks {
+		// Keep unlike structural blocks separate. Code and table blocks are
+		// also kept individually so their metadata never describes prose.
+		if current != "" && (currentType != blk.blockType || blk.blockType == "code" || blk.blockType == "table") {
+			flush()
+		}
+		candidate := blk.text
+		if current != "" {
+			candidate = current + "\n\n" + blk.text
+		}
+		if utf8.RuneCountInString(candidate) <= size {
+			if current == "" {
+				currentStart = blk.startByte
+				currentMeta = maps.Clone(blk.metadata)
+				currentType = blk.blockType
+			} else {
+				currentMeta[metaKeyWordCount] = strconv.Itoa(len(strings.Fields(candidate)))
+			}
+			current, currentEnd = candidate, blk.endByte
+			continue
+		}
+
+		flush()
+		if utf8.RuneCountInString(blk.text) <= size {
+			current = blk.text
+			currentStart, currentEnd = blk.startByte, blk.endByte
+			currentType = blk.blockType
+			currentMeta = maps.Clone(blk.metadata)
+			continue
+		}
+
+		if blk.blockType == "table" {
+			if parts, ok := splitMarkdownTableBlock(blk.text, size); ok {
+				for _, part := range parts {
+					chunk := buildChunk(len(chunks), part)
+					chunk.Metadata = maps.Clone(blk.metadata)
+					chunks = append(chunks, chunk)
+				}
+				continue
 			}
 		}
+
+		sub := newWordBoundaryChunker().Chunk(blk.text, size, overlap)
+		// Rebase only when the block itself is verbatim. Reconstructed blocks
+		// cannot provide trustworthy source provenance for their fragments.
+		verbatim := blk.startByte >= 0 && blk.endByte > blk.startByte && blk.endByte <= len(text) && text[blk.startByte:blk.endByte] == blk.text
+		for _, chunk := range sub {
+			chunk.ID = len(chunks)
+			chunk.Metadata = maps.Clone(blk.metadata)
+			if verbatim && chunk.EndChar > chunk.StartChar {
+				chunk.StartChar += blk.startByte
+				chunk.EndChar += blk.startByte
+			} else {
+				chunk.StartChar, chunk.EndChar = 0, 0
+			}
+			chunks = append(chunks, chunk)
+		}
 	}
+	flush()
 
 	return EnforceHardLimits(chunks, LimitOptions{MaxChars: size, Overlap: overlap, OriginalText: text})
 }

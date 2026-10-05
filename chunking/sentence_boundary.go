@@ -60,7 +60,7 @@ func buildSentenceChunksWithSpans(source string, spans []textSpan, sentences []s
 		// was pre-filled, emit it as a standalone chunk to avoid the
 		// fill-then-force-add cycle producing chunks with overlap when
 		// none is appropriate.
-		if i < len(sentences) && len(sentences[i]) > size && currentChunk.Len() == 0 {
+		if i < len(sentences) && utf8.RuneCountInString(sentences[i]) > size && currentChunk.Len() == 0 {
 			var startChar, endChar int
 			if i < len(spans) && (spans[i].start > 0 || spans[i].end > 0) {
 				startChar = spans[i].start
@@ -122,8 +122,11 @@ func writeSentenceOverlap(builder *strings.Builder, chunkID, overlap int, senten
 	if chunkID == 0 || overlap <= 0 || len(sentences) == 0 {
 		return
 	}
-	window := tailWindow(sentences, overlap, func(s string) int { return len(s) + 1 })
+	window := tailWindow(sentences, overlap, func(s string) int { return utf8.RuneCountInString(s) + 1 })
 	for _, sent := range window {
+		if utf8.RuneCountInString(builder.String())+utf8.RuneCountInString(sent)+1 > overlap {
+			continue
+		}
 		builder.WriteString(sent)
 		builder.WriteString(" ")
 	}

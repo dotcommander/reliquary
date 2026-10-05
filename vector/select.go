@@ -2,12 +2,15 @@ package vectors
 
 import (
 	"container/heap"
+	"math"
 	"slices"
 )
 
 // TopKMaxIndices returns the indices of the k largest values in scores, ordered
 // largest-first. k is clamped to len(scores); k<=0 returns an empty slice. Equal
-// scores are ordered by ascending index (stable). Runs in O(n log k) time, O(k) space.
+// scores are ordered by ascending index (stable). NaN values are excluded; the
+// result has at most k non-NaN entries. Infinities retain numerical order.
+// Runs in O(n log k) time, O(k) space.
 func TopKMaxIndices(scores []float32, k int) []int { return topK(scores, k, true) }
 
 // TopKMinIndices returns the indices of the k smallest values in scores, ordered
@@ -24,6 +27,9 @@ func topK(scores []float32, k int, max bool) []int {
 
 	h := &idxHeap{max: max}
 	for i, score := range scores {
+		if math.IsNaN(float64(score)) {
+			continue
+		}
 		if h.Len() < k {
 			heap.Push(h, idxItem{index: i, score: score})
 			continue

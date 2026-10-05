@@ -85,6 +85,16 @@ func KMeans64(points [][]float64, cfg KMeans64Config) *KMeans64Result {
 		}
 
 		newCentroids := ComputeClusterCentroids64(points, assignments, k)
+		counts := make([]int, k)
+		for _, cluster := range assignments {
+			counts[cluster]++
+		}
+		for cluster, count := range counts {
+			if count == 0 {
+				// An empty cluster has no new mean; preserve its prior position.
+				newCentroids[cluster] = centroids[cluster]
+			}
+		}
 
 		maxMove := 0.0
 		for i := range centroids {

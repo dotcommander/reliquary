@@ -176,65 +176,38 @@ func runeCountBytes(s string, n int) int {
 }
 
 // StrategicSample returns a bounded representation of text by keeping the
-// first 67% and splicing midpoint + tail samples (each remainingQuota/3),
-// separated by seam markers. Returns text unchanged when the rune count of text
+// first 67% of the budget where markers fit and splicing midpoint + tail samples,
+// separated by seam markers counted in the budget. Nonpositive budgets return empty text. Returns text unchanged when the rune count of text
 // is less than or equal to optimalLen.
 //
 // Rune-boundary safety: the function operates on a slice of runes to ensure
 // multi-byte UTF-8 codepoints are never split.
 func StrategicSample(text string, optimalLen int) string {
+	if optimalLen <= 0 {
+		return ""
+	}
 	runes := []rune(text)
-	if len(runes) <= optimalLen || optimalLen <= 0 {
+	if len(runes) <= optimalLen {
 		return text
 	}
-
+	// Reserve marker space before allocating content quotas. Tiny budgets
+	// keep a prefix rather than introducing a marker that exceeds the budget.
+	markerCost := utf8.RuneCountInString(seamMiddle) + utf8.RuneCountInString(seamEnd)
+	if optimalLen < markerCost+3 {
+		return string(runes[:optimalLen])
+	}
+	contentQuota := optimalLen - markerCost
 	firstPortion := optimalLen * 2 / 3
-	remainingQuota := optimalLen - firstPortion
-	beginning := runes[:firstPortion]
+	if firstPortion > contentQuota-2 {
+		firstPortion = contentQuota - 2
+	}
+	sampleSize := (contentQuota - firstPortion) / 2
+	tailSize := contentQuota - firstPortion - sampleSize
 	remaining := runes[firstPortion:]
-
-	if len(remaining) <= remainingQuota {
-		return string(beginning) + string(remaining)
-	}
-
-	sampleSize := remainingQuota / 3
-	midPoint := len(remaining) / 2
-	endPoint := len(remaining) - sampleSize
-
-	// Guard: cap middle sample if it would exceed the remaining text.
-	if midPoint+sampleSize > len(remaining) {
-		sampleSize = len(remaining) - midPoint
-	}
-
-	// Guard: if tail overlaps with middle, skip tail sample.
-	if endPoint < midPoint+sampleSize {
-		var b strings.Builder
-		b.Grow(len(beginning) + len(seamMiddle) + sampleSize)
-		b.WriteString(string(beginning))
-		b.WriteString(seamMiddle)
-		b.WriteString(string(remaining[midPoint : midPoint+sampleSize]))
-		return b.String()
-	}
-
-	// Guard: zero sample size (very small remainingQuota).
-	if sampleSize == 0 {
-		var b strings.Builder
-		b.WriteString(string(beginning))
-		b.WriteString(seamMiddle)
-		if half := len(remaining) / 2; half > 0 {
-			b.WriteString(string(remaining[:half]))
-		}
-		return b.String()
-	}
-
-	var b strings.Builder
-	b.Grow(optimalLen + len(seamMiddle) + len(seamEnd) + 2*sampleSize)
-	b.WriteString(string(beginning))
-	b.WriteString(seamMiddle)
-	b.WriteString(string(remaining[midPoint : midPoint+sampleSize]))
-	b.WriteString(seamEnd)
-	b.WriteString(string(remaining[endPoint:]))
-	return b.String()
+	midPoint := (len(remaining) - sampleSize) / 2
+	return string(runes[:firstPortion]) + seamMiddle +
+		string(remaining[midPoint:midPoint+sampleSize]) + seamEnd +
+		string(runes[len(runes)-tailSize:])
 }
 
 // StrategicSample on OptimalChunker delegates to the package function.

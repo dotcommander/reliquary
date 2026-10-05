@@ -44,7 +44,9 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryText string, resul
 	result.KeywordScore = 0
 	result.FilenameScore = 0
 	result.CombinedScore = 0
-	hasText := queryText != ""
+	queryTokens := tokenize(queryText)
+	contentTokens := tokenize(result.Content)
+	filenameTokens := tokenize(result.Filename)
 	hasEmbedding := len(queryEmbedding) > 0
 
 	if hasEmbedding && len(result.Embedding) > 0 {
@@ -55,16 +57,16 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryText string, resul
 			channels.embedding = true
 		}
 	}
-	if hasText && result.Content != "" {
-		result.KeywordScore = keywordOverlap(queryText, result.Content)
+	if len(queryTokens) > 0 && len(contentTokens) > 0 {
+		result.KeywordScore = overlapRatio(queryTokens, contentTokens)
 		raw.Keyword = result.KeywordScore
 		present.Keyword = true
 		if channels != nil {
 			channels.keyword = true
 		}
 	}
-	if hasText && result.Filename != "" {
-		result.FilenameScore = FilenameOverlap(result.Filename, queryText)
+	if len(queryTokens) > 0 && len(filenameTokens) > 0 {
+		result.FilenameScore = overlapRatio(filenameTokens, queryTokens)
 		raw.Filename = result.FilenameScore
 		present.Filename = true
 		if channels != nil {

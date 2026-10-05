@@ -1,6 +1,7 @@
 package chunking
 
 import (
+	"maps"
 	"strings"
 	"unicode/utf8"
 )
@@ -43,7 +44,8 @@ func EnforceHardLimits(chunks []Chunk, opts LimitOptions) []Chunk {
 			continue
 		}
 
-		// Oversized — split it.
+		// Oversized — split it, retaining the originating block classification.
+		firstSub := len(result)
 		subs := splitOversizedChunk(c.Text, opts.MaxChars)
 		if opts.OriginalText != "" && (c.StartChar != 0 || c.EndChar != 0) {
 			// Propagate sub-spans by locating each sub-text within the
@@ -75,6 +77,9 @@ func EnforceHardLimits(chunks []Chunk, opts LimitOptions) []Chunk {
 				result = append(result, buildChunk(id, sub))
 				id++
 			}
+		}
+		for i := firstSub; i < len(result); i++ {
+			result[i].Metadata = maps.Clone(c.Metadata)
 		}
 	}
 
@@ -145,9 +150,10 @@ func splitAtBoundary(text string, maxChars int, fn splitFunc) []string {
 	for _, seg := range segments {
 		segRunes := utf8.RuneCountInString(seg)
 
-		if buf.Len() > 0 && runeCount+1+segRunes > maxChars && runeCount >= maxChars/2 {
-			// Flush current buffer, but only when we've accumulated at least
-			// half the budget to prevent sliver chunks.
+		if buf.Len() > 0 && runeCount+1+segRunes > maxChars && (segRunes <= maxChars || runeCount >= maxChars/2) {
+			// Keep bounded segments intact even below half the budget. An
+			// oversized atom still uses the floor before falling back to finer
+			// boundaries, avoiding a tiny leading chunk.
 			result = append(result, strings.TrimSpace(buf.String()))
 			buf.Reset()
 			runeCount = 0

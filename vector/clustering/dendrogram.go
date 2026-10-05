@@ -3,29 +3,35 @@ package clustering
 // CutDendrogram cuts the dendrogram at a specific distance threshold.
 // Returns cluster assignments.
 func CutDendrogram(dendrogram []MergeStep, n int, distanceThreshold float64) []int {
-	// Start with each point in its own cluster
-	assignments := make([]int, n)
-	for i := range assignments {
-		assignments[i] = i
+	// Representatives map both original leaves and HAC's synthetic IDs to
+	// original leaves. Union-find preserves membership across chained merges.
+	parents := make([]int, n)
+	representatives := make([]int, n+len(dendrogram))
+	for i := range parents {
+		parents[i] = i
+		representatives[i] = i
+	}
+	find := func(leaf int) int {
+		for parents[leaf] != leaf {
+			parents[leaf] = parents[parents[leaf]]
+			leaf = parents[leaf]
+		}
+		return leaf
 	}
 
 	// Apply merges that happen below the threshold
-	for _, step := range dendrogram {
+	for merge, step := range dendrogram {
 		if step.Distance > distanceThreshold {
 			break
 		}
-		// Find all points in cluster A and B, merge them
-		// This requires tracking which cluster each point belongs to
-		// For simplicity, we rebuild from assignments
-		targetCluster := -1
-		for i, a := range assignments {
-			if a == step.ClusterA || a == step.ClusterB {
-				if targetCluster == -1 {
-					targetCluster = step.ClusterA
-				}
-				assignments[i] = targetCluster
-			}
-		}
+		a := find(representatives[step.ClusterA])
+		b := find(representatives[step.ClusterB])
+		parents[b] = a
+		representatives[n+merge] = a
+	}
+	assignments := make([]int, n)
+	for leaf := range assignments {
+		assignments[leaf] = find(leaf)
 	}
 
 	// Renumber clusters contiguously

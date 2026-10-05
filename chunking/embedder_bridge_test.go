@@ -101,3 +101,23 @@ func TestBatchEmbedderFromEmbedder_NilEmbedder(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no underlying embedding.Embedder")
 }
+
+func TestBatchEmbedderFromEmbedder_TypedNilRegression(t *testing.T) {
+	t.Parallel()
+	var fake *recordingEmbedder
+	bridge := BatchEmbedderFromEmbedder(fake, embedding.ModelRef{}, embedding.KindDocument)
+	vectors, err := bridge.EmbedBatch(t.Context(), []string{"x"})
+	if err == nil || vectors != nil {
+		t.Fatalf("typed nil accepted: %v %v", vectors, err)
+	}
+}
+
+func TestBatchEmbedderFromEmbedder_EmptyBatchNoCallRegression(t *testing.T) {
+	t.Parallel()
+	fake := &recordingEmbedder{err: errors.New("must not be called")}
+	bridge := BatchEmbedderFromEmbedder(fake, embedding.ModelRef{}, embedding.KindDocument)
+	vectors, err := bridge.EmbedBatch(t.Context(), nil)
+	if err != nil || vectors != nil || len(fake.requests) != 0 {
+		t.Fatalf("empty batch called provider: %v %v", vectors, err)
+	}
+}

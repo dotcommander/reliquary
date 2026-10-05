@@ -17,6 +17,13 @@ func (h *hardCutChunker) Chunk(text string, size int, overlap int) []Chunk {
 		return nil
 	}
 
+	if overlap < 0 {
+		overlap = 0
+	}
+	if overlap >= size {
+		overlap = size - 1
+	}
+
 	var chunks []Chunk
 	runes := []rune(text)
 	chunkID := 0
@@ -30,21 +37,17 @@ func (h *hardCutChunker) Chunk(text string, size int, overlap int) []Chunk {
 			end = len(runes)
 		}
 
-		// Apply overlap from the previous chunk.
 		start := i
-		if chunkID > 0 && overlap > 0 {
-			start = i - overlap
-			if start < 0 {
-				start = 0
-			}
-		}
 
 		chunkText := string(runes[start:end])
 		spanStart := byteOffsets[start]
 		spanEnd := byteOffsets[end]
 		chunks = append(chunks, buildChunkWithSpan(chunkID, chunkText, spanStart, spanEnd))
 
-		i = end
+		if end == len(runes) {
+			break
+		}
+		i = end - overlap
 		chunkID++
 	}
 

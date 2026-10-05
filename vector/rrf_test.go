@@ -1,6 +1,8 @@
 package vectors
 
 import (
+	"math"
+	"slices"
 	"testing"
 )
 
@@ -156,5 +158,20 @@ func TestRRF_DuplicateIndexInOneListAccumulates(t *testing.T) {
 	}
 	if !approxEq64(max, 1.0/61.0+1.0/63.0, 1e-9) {
 		t.Fatalf("max = %v, want %v", max, 1.0/61.0+1.0/63.0)
+	}
+}
+
+func TestRRFInvalidKUsesDefault(t *testing.T) {
+	t.Parallel()
+	ranked := [][]int{{3, 1}, {1, 3}}
+	want, wantMax := RRF(ranked, 60)
+	for _, k := range []float64{-1, 0, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		got, gotMax := RRF(ranked, k)
+		if !slices.Equal(got, want) || gotMax != wantMax {
+			t.Fatalf("k=%v: got %v/%v, want %v/%v", k, got, gotMax, want, wantMax)
+		}
+		if len(got) != 2 || got[0].Index != 1 || got[1].Index != 3 {
+			t.Fatalf("k=%v: unstable tied ranking %v", k, got)
+		}
 	}
 }

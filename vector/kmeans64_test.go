@@ -2,6 +2,7 @@ package vectors
 
 import (
 	"math"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -233,5 +234,47 @@ func TestFindOptimalK64PreservesValidTwoPointBehavior(t *testing.T) {
 	bestK, bestScore, assignments, centroids, scores, kValues := FindOptimalK64([][]float64{{1, 0}, {0, 1}}, 2, 5)
 	if bestK != 1 || bestScore != 0 || len(assignments) != 2 || centroids != nil || len(scores) != 1 || scores[0] != 0 || len(kValues) != 1 || kValues[0] != 1 {
 		t.Fatalf("FindOptimalK64 two-point result = (%d, %v, %v, %v, %v, %v), want legacy k=1 tuple", bestK, bestScore, assignments, centroids, scores, kValues)
+	}
+}
+
+func TestKMeans64RetainsEmptyCentroids(t *testing.T) {
+	t.Parallel()
+	for _, points := range [][][]float64{
+		{{3, 4}, {3, 4}, {3, 4}},
+		{{3, 4}, {3, 4}, {0, 5}, {0, 5}},
+	} {
+		cfg := KMeans64Config{K: len(points), MaxIterations: 8, Seed: 7}
+		result := KMeans64(points, cfg)
+		repeated := KMeans64(points, cfg)
+		if result.K != len(points) || !result.Converged || result.Iterations > cfg.MaxIterations {
+			t.Fatalf("unexpected clustering bounds: %+v", result)
+		}
+		counts := make([]int, result.K)
+		for _, cluster := range result.Assignments {
+			counts[cluster]++
+		}
+		empty := 0
+		for cluster, centroid := range result.Centroids {
+			for dim, value := range centroid {
+				if math.IsNaN(value) || math.IsInf(value, 0) || value != repeated.Centroids[cluster][dim] {
+					t.Fatalf("centroid is not finite and deterministic: %v / %v", result.Centroids, repeated.Centroids)
+				}
+			}
+			if counts[cluster] == 0 {
+				empty++
+				matchesInput := false
+				for _, point := range points {
+					if slices.Equal(centroid, point) {
+						matchesInput = true
+					}
+				}
+				if !matchesInput {
+					t.Fatalf("empty centroid %v lost its previous input position", centroid)
+				}
+			}
+		}
+		if empty == 0 || !slices.Equal(result.Assignments, repeated.Assignments) {
+			t.Fatalf("expected deterministic assignments and at least one empty cluster: %+v", result)
+		}
 	}
 }

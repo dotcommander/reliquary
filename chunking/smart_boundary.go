@@ -41,7 +41,7 @@ func writeSmartOverlap(builder *strings.Builder, chunkID, overlap int, sentences
 		return
 	}
 	overlapText := strings.Join(sentences, " ")
-	if len(overlapText) <= overlap {
+	if utf8.RuneCountInString(overlapText)+1 <= overlap {
 		builder.WriteString(overlapText)
 		builder.WriteString(" ")
 	}
@@ -50,7 +50,14 @@ func writeSmartOverlap(builder *strings.Builder, chunkID, overlap int, sentences
 func fillSmartSentenceChunk(builder *strings.Builder, sentences []string, i, size, startLen int) (int, []string) {
 	added := make([]string, 0)
 	runeCount := utf8.RuneCountInString(builder.String())
-	for i < len(sentences) && runeCount+utf8.RuneCountInString(sentences[i]) <= size {
+	for i < len(sentences) {
+		separator := 0
+		if builder.Len() > startLen {
+			separator = 1
+		}
+		if runeCount+separator+utf8.RuneCountInString(sentences[i]) > size {
+			break
+		}
 		if builder.Len() > startLen {
 			builder.WriteString(" ")
 			runeCount++
@@ -63,8 +70,8 @@ func fillSmartSentenceChunk(builder *strings.Builder, sentences []string, i, siz
 	return i, added
 }
 
-// tailSentenceOverlap returns the trailing sentences whose total byte length
+// tailSentenceOverlap returns the trailing sentences whose total rune cost
 // fits within the overlap budget. Uses tailWindow for selection.
 func tailSentenceOverlap(sentences []string, overlap int) []string {
-	return tailWindow(sentences, overlap, func(s string) int { return len(s) })
+	return tailWindow(sentences, overlap, func(s string) int { return utf8.RuneCountInString(s) + 1 })
 }

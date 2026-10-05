@@ -49,19 +49,22 @@ func TestSentenceBoundary_ForceAddPreservesSpans(t *testing.T) {
 	text := "Sentence one is very long. Sentence two is also very long."
 	// Chunker size=30, overlap=10.
 	// Sentence one (length 26) fits in Chunk 0.
-	// Sentence two (length 30) does not fit with the overlap, so it triggers force-add.
-	// The force-added chunk (length 57) is split by EnforceHardLimits into 3 parts.
+	// Sentence one plus its separator exceeds the 10-rune overlap budget,
+	// so it is not duplicated. The oversized second sentence is split by
+	// EnforceHardLimits into two parts.
 	chunks := newSentenceBoundaryChunker().Chunk(text, 30, 10)
-	require.Len(t, chunks, 4)
+	require.Len(t, chunks, 3)
 
 	assert.Equal(t, "Sentence one is very long.", chunks[0].Text)
 	assert.Equal(t, 0, chunks[0].StartChar)
 	assert.Equal(t, 26, chunks[0].EndChar)
 
-	assert.Equal(t, "Sentence one is very long.", chunks[1].Text)
-	assert.Equal(t, 0, chunks[1].StartChar)
-	assert.Equal(t, 0, chunks[1].EndChar)
-
-	assert.Equal(t, "Sentence two is also very", chunks[2].Text)
-	assert.Equal(t, "long.", chunks[3].Text)
+	assert.Equal(t, "Sentence two is also very", chunks[1].Text)
+	assert.Equal(t, "long.", chunks[2].Text)
+	for _, ch := range chunks {
+		assert.LessOrEqual(t, ch.CharCount, 30)
+		if ch.StartChar != 0 || ch.EndChar != 0 {
+			assert.Equal(t, ch.Text, text[ch.StartChar:ch.EndChar])
+		}
+	}
 }

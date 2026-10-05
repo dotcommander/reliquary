@@ -84,7 +84,7 @@ func (e *Embedder) Embed(ctx context.Context, request embedding.Request) (embedd
 	unique := make([]cacheInput, 0, len(request.Inputs))
 	byKey := make(map[string]int, len(request.Inputs))
 	for position, input := range request.Inputs {
-		key := cacheKey(e.identity, request.Model, input)
+		key := cacheKeyForKind(e.identity, request.Model, input, request.Kind)
 		if index, ok := byKey[key]; ok {
 			unique[index].positions = append(unique[index].positions, position)
 			continue
@@ -105,7 +105,7 @@ func (e *Embedder) Embed(ctx context.Context, request embedding.Request) (embedd
 			continue
 		}
 		entry.Vector = cloneVector(entry.Vector)
-		entryRequest := embedding.Request{Model: request.Model, Inputs: []string{unique[index].input}}
+		entryRequest := embedding.Request{Model: request.Model, Inputs: []string{unique[index].input}, Kind: request.Kind}
 		entryResult := embedding.Result{Model: entry.Model, Vectors: []embedding.Vector{entry.Vector}}
 		if err := embedding.ValidateResult(entryRequest, entryResult); err != nil {
 			return embedding.Result{}, fmt.Errorf("embedding cache: validate cached input %d: %w", unique[index].positions[0], err)
@@ -131,7 +131,8 @@ func (e *Embedder) Embed(ctx context.Context, request embedding.Request) (embedd
 		for resultIndex, uniqueIndex := range misses {
 			inputs[resultIndex] = unique[uniqueIndex].input
 		}
-		result, err := e.base.Embed(ctx, embedding.Request{Model: request.Model, Inputs: inputs})
+		missRequest := embedding.Request{Model: request.Model, Inputs: inputs, Kind: request.Kind}
+		result, err := e.base.Embed(ctx, missRequest)
 		if err != nil {
 			return embedding.Result{}, fmt.Errorf("embedding cache: embed %d misses: %w", len(misses), err)
 		}
@@ -139,7 +140,7 @@ func (e *Embedder) Embed(ctx context.Context, request embedding.Request) (embedd
 			return embedding.Result{}, err
 		}
 		generated = cloneResult(result)
-		if err := embedding.ValidateResult(embedding.Request{Model: request.Model, Inputs: inputs}, generated); err != nil {
+		if err := embedding.ValidateResult(missRequest, generated); err != nil {
 			return embedding.Result{}, fmt.Errorf("embedding cache: validate generated result: %w", err)
 		}
 		for resultIndex, uniqueIndex := range misses {
@@ -195,7 +196,11 @@ type cacheInput struct {
 }
 
 func cacheKey(identity string, model embedding.ModelRef, input string) string {
-	preimage := "reliquary:embedding-cache:v1:" + frame(identity) + frame(embedding.CacheKey(model, input))
+	return cacheKeyForKind(identity, model, input, embedding.KindDocument)
+}
+
+func cacheKeyForKind(identity string, model embedding.ModelRef, input string, kind embedding.Kind) string {
+	preimage := "reliquary:embedding-cache:v2:" + frame(identity) + frame(strconv.Itoa(int(kind))) + frame(embedding.CacheKey(model, input))
 	sum := sha256.Sum256([]byte(preimage))
 	return hex.EncodeToString(sum[:])
 }

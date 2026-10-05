@@ -1,6 +1,9 @@
 package vectors
 
-import "slices"
+import (
+	"math"
+	"slices"
+)
 
 // Scored pairs an index with its fused score.
 // Sorted by descending score, then ascending index for deterministic tie-breaks.
@@ -27,7 +30,7 @@ const defaultRRFK = 60
 // Returns the fused ranking sorted by descending score and ascending index for ties,
 // and the maximum score (or 0 for empty input).
 func RRF(ranked [][]int, k float64) ([]Scored, float64) {
-	if k <= 0 {
+	if k <= 0 || math.IsNaN(k) || math.IsInf(k, 0) {
 		k = defaultRRFK
 	}
 

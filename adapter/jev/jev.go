@@ -103,6 +103,9 @@ func New(client Client) (*Adapter, error) {
 // Choose routes a choice request through the injected client, maps the
 // provider result onto a judgment Choice, and validates the pair.
 func (a *Adapter) Choose(ctx context.Context, request judgment.ChoiceRequest) (judgment.Choice, error) {
+	if err := judgment.ValidateChoiceRequest(request); err != nil {
+		return judgment.Choice{}, err
+	}
 	call := Call{
 		Kind:    KindChoice,
 		Task:    request.Task,
@@ -132,6 +135,9 @@ func (a *Adapter) Choose(ctx context.Context, request judgment.ChoiceRequest) (j
 // Score routes a score request through the injected client, maps the
 // provider result onto a judgment Score, and validates the pair.
 func (a *Adapter) Score(ctx context.Context, request judgment.ScoreRequest) (judgment.Score, error) {
+	if err := judgment.ValidateScoreRequest(request); err != nil {
+		return judgment.Score{}, err
+	}
 	call := Call{
 		Kind:    KindScore,
 		Task:    request.Task,
@@ -155,6 +161,9 @@ func (a *Adapter) Score(ctx context.Context, request judgment.ScoreRequest) (jud
 // Ask routes a strict yes/no question through the injected client, maps the
 // provider result onto a judgment Noul, and validates the pair.
 func (a *Adapter) Ask(ctx context.Context, request judgment.NoulRequest) (judgment.Noul, error) {
+	if err := judgment.ValidateNoulRequest(request); err != nil {
+		return judgment.Noul{}, err
+	}
 	call := Call{
 		Kind:     KindNoul,
 		Context:  cloneContext(request.Context),

@@ -262,32 +262,35 @@ func (s *SemanticStore) scan(ctx context.Context, key Key, rawInput string) (sem
 	if err != nil {
 		return semanticEntry{}, Hit{}, err
 	}
-	var (
-		found   bool
-		best    semanticEntry
-		bestSim float32
-	)
-	s.cache.Range(func(item *ttlcache.Item[Key, semanticEntry]) bool {
-		storedKey := item.Key()
-		if storedKey.Tenant != key.Tenant || storedKey.Schema != key.Schema || storedKey.Primitive != key.Primitive {
-			return true
-		}
-		entry := item.Value()
-		if len(entry.vec) == 0 {
-			return true
-		}
-		sim := vectors.Cosine32(query, entry.vec)
-		if !found || sim > bestSim {
-			found, best, bestSim = true, entry, sim
-		}
-		return true
-	})
+	best, bestSim, found := closestSemanticEntry(s.cache.Items(), key, query)
 	if found && bestSim >= s.threshold {
 		s.semanticHits.Add(1)
 		return best, Hit{Kind: HitSemantic, Similarity: bestSim}, nil
 	}
 	s.misses.Add(1)
 	return semanticEntry{}, Hit{}, nil
+}
+
+// closestSemanticEntry ranks a nonexpired Items snapshot without traversing the
+// cache's mutable LRU list. Item.Value synchronizes reads with cache updates.
+func closestSemanticEntry(items map[Key]*ttlcache.Item[Key, semanticEntry], key Key, query []float32) (semanticEntry, float32, bool) {
+	var best semanticEntry
+	var bestSim float32
+	var found bool
+	for storedKey, item := range items {
+		if storedKey.Tenant != key.Tenant || storedKey.Schema != key.Schema || storedKey.Primitive != key.Primitive {
+			continue
+		}
+		entry := item.Value()
+		if len(entry.vec) == 0 {
+			continue
+		}
+		sim := vectors.Cosine32(query, entry.vec)
+		if !found || sim > bestSim {
+			found, best, bestSim = true, entry, sim
+		}
+	}
+	return best, bestSim, found
 }
 
 // embed embeds one judgment input as a query and validates the result

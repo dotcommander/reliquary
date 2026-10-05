@@ -100,6 +100,7 @@ type SemanticChunker struct {
 	embedder BatchEmbedder
 	opts     SemanticOpts
 	fallback Chunker
+	maxLimit int // explicit positive ceiling; zero preserves default merge behavior
 }
 
 // NewSemanticChunker creates a semantic chunker that falls back to smart
@@ -113,6 +114,7 @@ func NewSemanticChunker(embedder BatchEmbedder, opts SemanticOpts) (*SemanticChu
 		embedder: embedder,
 		opts:     opts.withDefaults(),
 		fallback: newSmartBoundaryChunker(),
+		maxLimit: opts.MaxChunkChars,
 	}, nil
 }
 
@@ -120,8 +122,9 @@ func NewSemanticChunker(embedder BatchEmbedder, opts SemanticOpts) (*SemanticChu
 // embeddings. It returns false when the supplied data is not suitable for
 // semantic planning; callers should then use their preferred fallback chunker.
 func PlanSemanticChunks(text string, units []SemanticUnit, embeddings [][]float32, opts SemanticPlanOptions) (SemanticPlan, bool) {
+	maxLimit := opts.MaxChunkChars
 	opts = opts.withDefaults()
-	spans, unitTexts := semanticUnitsFromPublic(units)
+	spans, unitTexts := semanticUnitsFromPublic(units, text)
 
 	if len(spans) < 3 {
 		return SemanticPlan{}, false
@@ -144,17 +147,21 @@ func PlanSemanticChunks(text string, units []SemanticUnit, embeddings [][]float3
 	breaks := findBreakpoints(sims, opts.BreakSensitivity, opts.CoherenceWindow)
 	groups := groupBySplits(unitTexts, breaks)
 	groups = enforceSizeConstraints(groups, opts.MinChunkChars, opts.MaxChunkChars)
-	groups = mergeAdjacentGroups(spans, groups, embeddings, defaultSemanticMergeThreshold, text)
+	groups = mergeAdjacentGroups(spans, groups, embeddings, defaultSemanticMergeThreshold, text, maxLimit)
 
 	chunks := buildSemanticChunks(spans, groups, text)
 	chunks = EnforceHardLimits(chunks, LimitOptions{
-		MaxChars:     opts.FallbackSize,
+		MaxChars:     semanticHardLimit(maxLimit, opts.FallbackSize),
 		Overlap:      opts.FallbackOverlap,
 		OriginalText: text,
 	})
 
+	normalizedUnits := make([]SemanticUnit, len(spans))
+	for i, u := range spans {
+		normalizedUnits[i] = SemanticUnit{Text: u.text, StartChar: u.start, EndChar: u.end}
+	}
 	return SemanticPlan{
-		Units:        units,
+		Units:        normalizedUnits,
 		Similarities: sims,
 		Breaks:       breaks,
 		Chunks:       chunks,
@@ -247,12 +254,12 @@ func (sc *SemanticChunker) ChunkSemantic(ctx context.Context, text string, fallb
 	// Merge adjacent groups with high cosine similarity.
 	// Only applies when all units were analyzable (no markdown noise filtering).
 	if len(embeddings) == len(unitTexts) {
-		groups = mergeAdjacentGroups(units, groups, embeddings, defaultSemanticMergeThreshold, text)
+		groups = mergeAdjacentGroups(units, groups, embeddings, defaultSemanticMergeThreshold, text, sc.maxLimit)
 	}
 
 	// Build chunks with span propagation.
 	chunks := buildSemanticChunks(units, groups, text)
-	return EnforceHardLimits(chunks, LimitOptions{MaxChars: fallbackSize, Overlap: fallbackOverlap, OriginalText: text})
+	return EnforceHardLimits(chunks, LimitOptions{MaxChars: semanticHardLimit(sc.maxLimit, fallbackSize), Overlap: fallbackOverlap, OriginalText: text})
 }
 
 // groupBySplits groups sentences into text blocks at the given break indices.
@@ -349,4 +356,12 @@ func splitOversized(sentences []string, maxChars int) []string {
 		groups = append(groups, strings.TrimSpace(buf.String()))
 	}
 	return groups
+}
+
+// semanticHardLimit applies both configured ceilings when they are positive.
+func semanticHardLimit(maxChars, fallbackSize int) int {
+	if fallbackSize > 0 && (maxChars <= 0 || fallbackSize < maxChars) {
+		return fallbackSize
+	}
+	return maxChars
 }

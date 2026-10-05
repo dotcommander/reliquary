@@ -32,7 +32,7 @@ func findCodeBlockRanges(runes []rune) []codeBlockRange {
 		}
 
 		// Check for indented code block (4 spaces or tab).
-		if isIndentedBlockStart(runes, i) {
+		if isIndentedBlockStart(runes, i) && !isBlankLine(runes, i) {
 			end := findIndentedBlockEnd(runes, i)
 			ranges = append(ranges, codeBlockRange{runeStart: i, runeEnd: end})
 			i = end
@@ -104,19 +104,23 @@ func isIndentedBlockStart(runes []rune, pos int) bool {
 // indented. Otherwise the block ends before the blank line.
 func findIndentedBlockEnd(runes []rune, pos int) int {
 	for pos < len(runes) {
-		if !isIndentedBlockStart(runes, pos) {
-			// Blank line: peek ahead to see if the next non-blank line
-			// is also indented.
-			if isBlankLine(runes, pos) {
-				peek := pos
-				for peek < len(runes) && runes[peek] == '\n' {
+		if isBlankLine(runes, pos) {
+			// Whitespace-only lines follow the same rule regardless of
+			// whether their indentation would otherwise start code.
+			peek := pos
+			for peek < len(runes) && isBlankLine(runes, peek) {
+				peek = indexOfNewline(runes, peek)
+				if peek < len(runes) {
 					peek++
 				}
-				if peek < len(runes) && isIndentedBlockStart(runes, peek) {
-					pos = peek
-					continue
-				}
 			}
+			if peek < len(runes) && isIndentedBlockStart(runes, peek) {
+				pos = peek
+				continue
+			}
+			break
+		}
+		if !isIndentedBlockStart(runes, pos) {
 			break
 		}
 		pos = indexOfNewline(runes, pos)

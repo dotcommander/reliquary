@@ -185,7 +185,10 @@ func mergeRuneSpans(source string, runes []rune, leaves []runeSpan, size, overla
 		// The leaf does not fit: flush the current chunk and restart inside
 		// its trailing overlap window.
 		emit(chunkStart, chunkEnd)
-		next := chunkEnd - overlap
+		next := leaf.start
+		if overlap > 0 {
+			next = chunkEnd - overlap
+		}
 		if next <= chunkStart {
 			next = chunkStart + 1
 		}

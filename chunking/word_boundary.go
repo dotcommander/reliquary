@@ -44,13 +44,13 @@ func (w *wordBoundaryChunker) Chunk(text string, size int, overlap int) []Chunk 
 		startPos := currentChunk.Len()
 
 		// Escape hatch: single word wider than size and no overlap pre-filled.
-		if i < len(words) && len(words[i]) > size && startPos == 0 {
-			word := words[i]
+		if i < len(words) && utf8.RuneCountInString(words[i]) > size && startPos == 0 {
+			word := strings.TrimSpace(words[i])
 			rawStart := wordByteStarts[i]
 			rawEnd := wordByteStarts[i+1]
 			startChar, endChar := trimSpanToText(text, word, rawStart, rawEnd)
 			overlapBuffer = tailWordOverlapBuffer(word, overlap)
-			chunks = append(chunks, buildChunkWithSpan(chunkID, word, startChar, endChar))
+			chunks = appendChunkIfValid(chunks, chunkID, word, text, startChar, endChar)
 			chunkID++
 			i++
 			continue
@@ -67,7 +67,7 @@ func (w *wordBoundaryChunker) Chunk(text string, size int, overlap int) []Chunk 
 			rawStart := wordByteStarts[firstWordIdx]
 			rawEnd := wordByteStarts[lastWordIdx+1]
 			startChar, endChar := trimSpanToText(text, chunkText, rawStart, rawEnd)
-			chunks = append(chunks, buildChunkWithSpan(chunkID, chunkText, startChar, endChar))
+			chunks = appendChunkIfValid(chunks, chunkID, chunkText, text, startChar, endChar)
 			overlapBuffer = tailWordOverlapBuffer(chunkText, overlap)
 			chunkID++
 		}
@@ -81,7 +81,7 @@ func writeWordOverlap(builder *strings.Builder, chunkID, overlap int, buffer []s
 		return
 	}
 	overlapText := strings.Join(buffer, " ")
-	if len(overlapText) <= overlap {
+	if utf8.RuneCountInString(overlapText)+1 <= overlap {
 		builder.WriteString(overlapText)
 		builder.WriteString(" ")
 	}
@@ -102,14 +102,14 @@ func fillWordChunk(builder *strings.Builder, words []string, i, size, startPos i
 }
 
 // tailWordOverlapBuffer returns the trailing words from chunkText whose total
-// byte length (including spaces) fits within overlap budget. Uses tailWindow
+// rune count (including spaces) fits within overlap budget. Uses tailWindow
 // to select the trailing window of words.
 func tailWordOverlapBuffer(chunkText string, overlap int) []string {
 	if overlap <= 0 {
 		return nil
 	}
 	words := strings.Fields(chunkText)
-	selected := tailWindow(words, overlap, func(s string) int { return len(s) + 1 }) // word + space
+	selected := tailWindow(words, overlap, func(s string) int { return utf8.RuneCountInString(s) + 1 }) // word + space
 	if len(selected) == 0 {
 		return nil
 	}

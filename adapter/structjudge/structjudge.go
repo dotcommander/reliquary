@@ -137,6 +137,9 @@ type wireNoul struct {
 // Choose renders the choice request into one instruction, generates a
 // schema-forced response, and validates the mapped choice.
 func (a *Adapter) Choose(ctx context.Context, request judgment.ChoiceRequest) (judgment.Choice, error) {
+	if err := judgment.ValidateChoiceRequest(request); err != nil {
+		return judgment.Choice{}, err
+	}
 	var payload wireChoice
 	if err := a.generate(ctx, choiceInstruction(request), choiceSchema, &payload); err != nil {
 		return judgment.Choice{}, err
@@ -158,6 +161,9 @@ func (a *Adapter) Choose(ctx context.Context, request judgment.ChoiceRequest) (j
 // Score renders the score request into one instruction, generates a
 // schema-forced response, and validates the mapped score.
 func (a *Adapter) Score(ctx context.Context, request judgment.ScoreRequest) (judgment.Score, error) {
+	if err := judgment.ValidateScoreRequest(request); err != nil {
+		return judgment.Score{}, err
+	}
 	var payload wireScore
 	if err := a.generate(ctx, scoreInstruction(request), scoreSchema, &payload); err != nil {
 		return judgment.Score{}, err
@@ -172,6 +178,9 @@ func (a *Adapter) Score(ctx context.Context, request judgment.ScoreRequest) (jud
 // Ask renders the noul request into one instruction, generates a
 // schema-forced response, and validates the mapped verdict.
 func (a *Adapter) Ask(ctx context.Context, request judgment.NoulRequest) (judgment.Noul, error) {
+	if err := judgment.ValidateNoulRequest(request); err != nil {
+		return judgment.Noul{}, err
+	}
 	var payload wireNoul
 	if err := a.generate(ctx, noulInstruction(request), noulSchema, &payload); err != nil {
 		return judgment.Noul{}, err

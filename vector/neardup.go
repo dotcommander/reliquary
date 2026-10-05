@@ -111,7 +111,7 @@ func NearDuplicatePairs(vecs [][]float32, cosineThreshold float32) [][2]int {
 			continue
 		}
 		for j := i + 1; j < len(vecs); j++ {
-			if !usable[j] {
+			if !usable[j] || len(vecs[i]) != len(vecs[j]) {
 				continue
 			}
 			if Cosine32(vecs[i], vecs[j]) >= cosineThreshold {

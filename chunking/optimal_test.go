@@ -190,10 +190,10 @@ func TestStrategicSample_ZeroLen(t *testing.T) {
 
 	text := strings.Repeat("a", 500)
 	result := StrategicSample(text, 0)
-	assert.Equal(t, text, result, "optimalLen 0 should return text unchanged")
+	assert.Empty(t, result, "optimalLen 0 has no output budget")
 
 	result = StrategicSample(text, -5)
-	assert.Equal(t, text, result, "negative optimalLen should return text unchanged")
+	assert.Empty(t, result, "negative optimalLen has no output budget")
 }
 
 func TestStrategicSample_SeamPositions(t *testing.T) {
