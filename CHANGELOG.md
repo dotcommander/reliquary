@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.14.0 (2026-10-05)
+
+### Added
+
+- Add `judgment.ValidateChoiceRequest`, `ValidateScoreRequest`, and
+  `ValidateNoulRequest` for validating requests without a provider result.
+
+### Fixed
+
+- Reject invalid judgment requests before calling Jev or structured-output
+  clients, and make semantic judgment memory safe for concurrent use.
+- Correct Unicode chunk budgets, overlap and Markdown source spans, semantic
+  size limits, recursive split restarts, and typed-nil embedder validation.
+- Include document/query request kind in embedding cache keys. Existing cache
+  entries become misses; they are not automatically deleted or migrated.
+- Omit unsupported dimensions for OpenAI Ada embeddings, roll back PostgreSQL
+  transactions after cancellation, and rank text-only PostgreSQL candidates.
+- Harden lexical analysis, BM25 and reciprocal rank fusion, top-k handling of
+  NaN scores, near-duplicate vector dimensions, K-means, and dendrogram traversal.
+
+### Compatibility
+
+- Chunking fixes can change boundaries and stored revisions. Review your
+  chunking-policy identity; when adopting a changed policy, use a new identity
+  and reset/re-ingest affected indexes or create a fresh index.
+
 ## v0.13.0 (2026-10-04)
 
 ### Added

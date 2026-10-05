@@ -3,8 +3,20 @@ set -eu
 
 release_script=$(CDPATH= cd -- "$(dirname "$0")" && pwd)/release.sh
 release_script_dir=$(dirname "$release_script")
-tmp=${TMPDIR:-/tmp}/reliquary-release-test.$$
-trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+tmp_parent=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd)
+tmp=$(mktemp -d "$tmp_parent/reliquary-release-test.XXXXXX")
+cleanup() {
+	[ -d "$tmp" ] || return 0
+	case "$tmp" in
+		"$tmp_parent"/reliquary-release-test.??????)
+			# Delete only this uniquely created fixture tree; do not follow symlinks.
+			find "$tmp" -depth -mindepth 1 -delete && rmdir -- "$tmp"
+			;;
+		*) echo "release_test.sh: refusing cleanup outside fixture root: $tmp" >&2 ;;
+	esac
+}
+trap cleanup EXIT HUP INT TERM
+export TMPDIR="$tmp"
 
 fail() {
 	echo "release_test.sh: $*" >&2
@@ -53,7 +65,10 @@ assert_pristine() {
 	git -C "$repo" diff --cached --quiet || fail "failed preflight staged files"
 }
 
-mkdir -p "$tmp"
+assert_cleaned_preflight() {
+	[ -z "$(find "$tmp" -type d -name 'reliquary-release.*' -prune -print)" ] || fail "preflight left a disposable directory"
+	[ "$(git -C "$repo" worktree list --porcelain | rg -c '^worktree ')" -eq 1 ] || fail "preflight left a registered worktree"
+}
 
 # Planning the actual one-module shape is read-only and records the root module.
 repo=$tmp/plan
@@ -125,6 +140,7 @@ assert_pristine "$repo" "$head"
 if git -C "$repo" rev-parse -q --verify refs/tags/v0.8.0 >/dev/null; then
 	fail "failed verification created a tag"
 fi
+assert_cleaned_preflight
 
 # Repository-specific verification rejects a nested module that generic root
 # package tests would skip.
@@ -151,6 +167,7 @@ assert_pristine "$repo" "$head"
 if git -C "$repo" rev-parse -q --verify refs/tags/v0.8.0 >/dev/null; then
 	fail "nested module created a tag"
 fi
+assert_cleaned_preflight
 
 # A clean verified module tags the planned commit without manufacturing a commit.
 repo=$tmp/apply
@@ -164,6 +181,7 @@ head=$(git -C "$repo" rev-parse HEAD)
 [ "$(git -C "$repo" rev-parse HEAD)" = "$head" ] || fail "clean apply created an unnecessary commit"
 [ "$(git -C "$repo" rev-list -n 1 v0.8.0)" = "$head" ] || fail "tag does not point at planned commit"
 rg -q '^v0.8.0$' "$tmp/apply-output" || fail "apply output omitted tag"
+assert_cleaned_preflight
 
 # If tidy changes module files, apply commits the verified state before tagging it.
 repo=$tmp/tidy-change
@@ -178,5 +196,6 @@ new_head=$(git -C "$repo" rev-parse HEAD)
 [ "$new_head" != "$head" ] || fail "tidy change was not committed"
 [ "$(git -C "$repo" rev-list -n 1 v0.8.0)" = "$new_head" ] || fail "tag does not include tidy commit"
 rg -q 'release-test tidy change' "$repo/go.mod" || fail "verified tidy state was not copied back"
+assert_cleaned_preflight
 
 echo "release_test.sh: PASS"

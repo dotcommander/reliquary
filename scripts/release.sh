@@ -193,8 +193,14 @@ PY
 
 	preflight=$(mktemp -d "${TMPDIR:-/tmp}/reliquary-release.XXXXXX")
 	cleanup() {
-		git worktree remove --force "$preflight" >/dev/null 2>&1 || true
-		rm -rf "$preflight"
+		if git worktree remove --force "$preflight" >/dev/null 2>&1; then
+			return
+		fi
+		# Worktree creation may have failed, leaving only the empty mktemp root.
+		# Retain a nonempty root if Git cannot remove its own worktree safely.
+		if [ -d "$preflight" ] && ! rmdir -- "$preflight"; then
+			echo "release.sh: could not clean disposable worktree: $preflight" >&2
+		fi
 	}
 	trap cleanup EXIT HUP INT TERM
 
