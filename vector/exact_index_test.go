@@ -335,6 +335,46 @@ func TestExactIndexConstructorsSnapshotArena(t *testing.T) {
 	}
 }
 
+func TestNewExactIndexAdoptingAdoptsArena(t *testing.T) {
+	t.Parallel()
+
+	// Same setup as the snapshot test: adopting must be the mirror image —
+	// the caller's arena stays live in the index, so mutating it is visible.
+	arena := append(EncodeFloat32Vec([]float32{42}), EncodeFloat32Vec([]float32{1, 0})...)
+	idx, report := NewExactIndexAdopting(2, []IndexChunk{{Group: "original", Offset: 4, Length: 8}}, arena)
+	if report.IndexedRows != 1 || report.InputRows != 1 {
+		t.Fatalf("report = %+v, want 1 of 1 rows indexed", report)
+	}
+
+	results, ok := idx.Search([]float32{1, 0}, 1, -1)
+	if !ok || len(results) != 1 || results[0].Group != "original" {
+		t.Fatalf("Search() before mutation = (%+v, %v), want one result for original", results, ok)
+	}
+	assertInDelta(t, results[0].Score, 1, 0)
+
+	clear(arena)
+	results, ok = idx.Search([]float32{1, 0}, 1, 0.5)
+	if ok && len(results) > 0 {
+		t.Fatalf("Search() after clearing adopted arena = (%+v, %v), want no matches (arena is live)", results, ok)
+	}
+
+	// Validation parity with NewExactIndexChecked: bad spans and duplicate
+	// keys are skipped identically; the constructor differs only in ownership.
+	badChunks := []IndexChunk{
+		{Group: "ok", Offset: 0, Length: 8},
+		{Group: "oob", Offset: 1 << 30, Length: 8},
+		{Group: "ok", Offset: 0, Length: 8},
+	}
+	_, adoptingReport := NewExactIndexAdopting(2, badChunks, arena[:8])
+	_, checkedReport := NewExactIndexChecked(2, badChunks, arena[:8])
+	if adoptingReport != checkedReport {
+		t.Fatalf("adopting report %+v != checked report %+v; validation must match", adoptingReport, checkedReport)
+	}
+	if adoptingReport.IndexedRows != 1 || adoptingReport.SkippedBadSpan != 1 || adoptingReport.SkippedDuplicateKey != 1 {
+		t.Fatalf("adopting report = %+v, want 1 indexed, 1 bad-span, 1 duplicate", adoptingReport)
+	}
+}
+
 func TestExactIndex_SearchKeys(t *testing.T) {
 	t.Parallel()
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15.0 (2026-10-10)
+
+### Added
+
+- Add `NewExactIndexAdopting`: constructs an `ExactIndex` that adopts the
+  caller's arena without copying it, with row validation identical to
+  `NewExactIndexChecked`. Callers must not mutate the arena (or any alias)
+  while the index lives; in exchange, indexes built over exclusively-owned
+  arenas avoid the full-copy snapshot cost.
+
 ## v0.14.0 (2026-10-05)
 
 ### Added

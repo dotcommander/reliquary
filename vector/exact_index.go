@@ -96,6 +96,24 @@ func NewExactIndex(dims int, chunks []IndexChunk, arena []byte) *ExactIndex {
 // counted in SkippedBadBlob. It snapshots arena, so callers may mutate or
 // release their slice after this function returns.
 func NewExactIndexChecked(dims int, chunks []IndexChunk, arena []byte) (*ExactIndex, IndexBuildReport) {
+	return newExactIndex(dims, chunks, arena, true)
+}
+
+// NewExactIndexAdopting constructs an ExactIndex that adopts arena without
+// copying it, reporting skipped or suspicious rows exactly like
+// NewExactIndexChecked. Callers must not mutate arena, or any slice aliasing
+// the same backing array, for the index's lifetime: the index keeps the
+// reference and searches read it live. Prefer this constructor when the
+// arena was built (or read) solely for the index and has no other owners; it
+// avoids the full-copy cost of the snapshot contract.
+func NewExactIndexAdopting(dims int, chunks []IndexChunk, arena []byte) (*ExactIndex, IndexBuildReport) {
+	return newExactIndex(dims, chunks, arena, false)
+}
+
+// newExactIndex is the shared constructor core. snapshot=true clones the
+// arena so callers may release their slice; snapshot=false adopts the
+// caller's backing array. Row validation is identical for both.
+func newExactIndex(dims int, chunks []IndexChunk, arena []byte, snapshot bool) (*ExactIndex, IndexBuildReport) {
 	report := IndexBuildReport{InputRows: len(chunks)}
 
 	// Drop chunks whose arena span is out of bounds so Search paths cannot panic.
@@ -123,10 +141,14 @@ func NewExactIndexChecked(dims int, chunks []IndexChunk, arena []byte) (*ExactIn
 		valid = append(valid, c)
 	}
 
+	idxArena := arena
+	if snapshot {
+		idxArena = slices.Clone(arena)
+	}
 	idx := &ExactIndex{
 		dims:              dims,
 		chunks:            valid,
-		arena:             slices.Clone(arena),
+		arena:             idxArena,
 		groupChunkIndexes: make(map[string][]int),
 		chunkKeyIndexes:   make(map[IndexKey]int),
 	}
