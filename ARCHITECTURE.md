@@ -15,6 +15,10 @@ App facade -> ingestion/chunking/retrieval -> Index contract
   behavioral contract for every implementation.
 - `chunking`, `document`, `embedding`, `retrieval`, `dedup`, `textutil`, and
   `vector` are the flat public retrieval building blocks.
+- `chunkservice` is the request-level orchestration layer over `chunking`:
+  validation, strategy dispatch, strict semantic, token budgets and
+  ceilings, embeddings attachment, batch envelopes, and wire projection.
+  Apps bring providers, transport, and presentation; it owns the logic.
 - `embedding/cache` is a provider-neutral decorator over `embedding.Embedder`.
   It depends only on the embedding contract and an injected caller-owned Store;
   it supplies no backend, persistence lifecycle, or provider policy.

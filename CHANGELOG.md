@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.16.0 (2026-10-12)
+
+### Added
+
+- Add the `chunkservice` package: request-level chunking orchestration over
+  the `chunking` engine. `chunkservice.Service` owns request validation,
+  strategy dispatch (all ten strategies plus a strict semantic path whose
+  mid-run embedding failures surface as errors instead of silent boundary
+  fallback), the legacy `PreflightCounter` token budget, the post-strategy
+  `MaxTokens` tiktoken ceiling, `include_embeddings` vector attachment,
+  batch envelopes with per-item error results, and the wire projection
+  (rune offsets, content hashes, heading paths, strategy metadata). This is
+  the consolidation home for chunking front-end logic previously duplicated
+  across apps (`chunker`, `distill`).
+- Add `chunking.RuneSpan` (byte→rune offset mapping) and
+  `chunking.LatchBatchEmbedder` (error-latching decorator) plus
+  `chunking.LimitBatchSize` (request-capped embedder decorator).
+
 ## v0.15.0 (2026-10-10)
 
 ### Added

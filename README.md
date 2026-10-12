@@ -206,6 +206,7 @@ Custom embedders should run `embedding/embeddingtest`.
 | `embed` | Deterministic hashing embedder for demos and tests |
 | `index` | Candidate retrieval contract, in-memory implementation, and `indextest` suite |
 | `chunking` | Boundary-aware text, code, sentence, and heading splitters |
+| `chunkservice` | Request-level chunking orchestration: validation, strategy dispatch (strict semantic), legacy preflight token budgets, post-strategy token ceilings, per-chunk embeddings, batch envelopes, and the wire projection |
 | `retrieval` | Hybrid scoring, MMR, filtering, evaluation, and neutral context rendering |
 | `judgment` | Typed `Choice`/`Score`/`Noul` evaluation contracts, validation, and the cache-then-escalation `Router` |
 | `judgment/memory` | Exact-hit and semantic judgment memory: scope-and-fingerprint keys, optional injected-embedder similarity hits, TTL and capacity eviction |
