@@ -189,7 +189,10 @@ func splitByLevel(text string, level int) []section {
 	var contentParts []string
 
 	flush := func() {
-		cur.content = strings.TrimSpace(strings.Join(contentParts, "\n"))
+		// Re-join with blank-line separation: this content is re-parsed by
+		// the next recursion level, and single newlines let a following
+		// paragraph be absorbed into a trailing table as spurious rows.
+		cur.content = strings.TrimSpace(strings.Join(contentParts, "\n\n"))
 		contentParts = nil
 		cur.heading = strings.TrimSpace(cur.heading)
 		if cur.heading != "" || cur.content != "" {

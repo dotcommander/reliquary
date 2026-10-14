@@ -294,8 +294,8 @@ func TestMarkdownAware_TableChunksRepeatHeader(t *testing.T) {
 	chunks := c.Chunk(table, 200, 0)
 	require.Greater(t, len(chunks), 1, "expected multiple chunks from oversized table")
 
-	// Goldmark reformats tables: separator row is stripped, cells are normalized.
-	// The header row (first row) should appear in every chunk.
+	// Table blocks are verbatim source; the splitter repeats the header row
+	// (and the separator row, which is now preserved) in every chunk.
 	header := "| Name | Type | Value |"
 	for _, ch := range chunks {
 		lines := strings.Split(ch.Text, "\n")
@@ -312,13 +312,17 @@ func TestMarkdownAware_TableChunksPreserveRows(t *testing.T) {
 	require.NoError(t, err)
 	chunks := c.Chunk(table, 300, 0)
 
-	// Collect all body rows from all chunks (skip header line).
+	// Collect all body rows from all chunks, skipping the repeated header
+	// and separator rows that prefix every table chunk.
 	var allRows []string
 	for _, ch := range chunks {
 		lines := strings.Split(ch.Text, "\n")
 		for i, line := range lines {
 			if i == 0 {
-				continue // skip header row
+				continue // header row
+			}
+			if separatorRowRe.MatchString(line) {
+				continue // separator row repeated per chunk
 			}
 			if strings.TrimSpace(line) != "" {
 				allRows = append(allRows, line)

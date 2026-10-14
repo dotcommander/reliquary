@@ -238,6 +238,33 @@ func (be *blockExtractor) extractList(n *ast.List) {
 }
 
 func (be *blockExtractor) extractTable(n *extast.Table) {
+	// Prefer the verbatim source span. goldmark parses the delimiter row
+	// (|---|---|) into per-column alignment attributes instead of text
+	// cells, so AST reconstruction cannot recover it and also normalizes
+	// cell padding. Only the source bytes keep tables byte-exact.
+	start, end := nodeByteSpan(n)
+	if start < 0 || end <= start || end > len(be.source) {
+		// Container spans can be incomplete when block-level children carry
+		// no line segments; table cells always do, so derive the span from
+		// the outermost cell segments instead.
+		start, end = tableCellSpan(n)
+	}
+	if srcStart, srcEnd, ok := tableSourceSpan(be.source, start, end); ok {
+		be.blocks = append(be.blocks, markdownBlock{
+			text:      string(be.source[srcStart:srcEnd]),
+			blockType: "table",
+			level:     0,
+			startByte: srcStart,
+			endByte:   srcEnd,
+			metadata:  nil,
+		})
+		return
+	}
+
+	// Fallback: reconstruct from AST cells when the source span cannot be
+	// validated (e.g. transformed input). The delimiter row is unavailable
+	// on this path and stays lost; block offsets are not claimed for the
+	// reformatted text either.
 	var buf bytes.Buffer
 	for child := n.FirstChild(); child != nil; child = child.NextSibling() {
 		var cells []string
@@ -256,16 +283,100 @@ func (be *blockExtractor) extractTable(n *extast.Table) {
 		return
 	}
 
-	start, end := nodeByteSpan(n)
-
 	be.blocks = append(be.blocks, markdownBlock{
 		text:      content,
 		blockType: "table",
 		level:     0,
-		startByte: start,
-		endByte:   end,
+		startByte: 0,
+		endByte:   0,
 		metadata:  nil,
 	})
+}
+
+// tableCellSpan returns the byte span covering the first and last cell
+// line segments of a table node. Table and row nodes carry no line segments
+// of their own; cells are the reliable carriers.
+func tableCellSpan(n ast.Node) (int, int) {
+	first, last := -1, 0
+	for row := n.FirstChild(); row != nil; row = row.NextSibling() {
+		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+			lines := cell.Lines()
+			if lines.Len() == 0 {
+				continue
+			}
+			f := int(lines.At(0).Start)
+			l := int(lines.At(lines.Len() - 1).Stop)
+			if first < 0 || f < first {
+				first = f
+			}
+			if l > last {
+				last = l
+			}
+		}
+	}
+	if first < 0 || last <= first {
+		return 0, 0
+	}
+	return first, last
+}
+
+// tableSourceSpan expands a table node's byte span to full source lines and
+// verifies the span still looks like a pipe table whose delimiter row is
+// present. It mirrors fencedCodeSourceSpan: claim source offsets only for
+// verbatim bytes, never for reconstructed text.
+func tableSourceSpan(source []byte, start, end int) (int, int, bool) {
+	if start < 0 || end <= start || end > len(source) {
+		return 0, 0, false
+	}
+	lineStart := bytes.LastIndexByte(source[:start], '\n') + 1
+	lineEnd := end
+	for lineEnd < len(source) && source[lineEnd] != '\n' {
+		lineEnd++
+	}
+	span := string(source[lineStart:lineEnd])
+	lines := strings.Split(span, "\n")
+	if len(lines) < 2 {
+		return 0, 0, false
+	}
+	hasDelimiter := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if trimmed == "" || !strings.Contains(trimmed, "|") {
+			return 0, 0, false
+		}
+		if isTableDelimiterRow(trimmed) {
+			hasDelimiter = true
+		}
+	}
+	if !hasDelimiter {
+		return 0, 0, false
+	}
+	// Chunk text is trimmed by the common emission helper; trim its span too.
+	raw := string(source[lineStart:lineEnd])
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return 0, 0, false
+	}
+	offset := lineStart + strings.Index(raw, trimmed)
+	return offset, offset + len(trimmed), true
+}
+
+// isTableDelimiterRow reports whether line is a markdown table delimiter row
+// such as |---|, |:---|---:|, or ---|--- (pipes optional at both ends).
+func isTableDelimiterRow(line string) bool {
+	s := strings.TrimSpace(line)
+	s = strings.TrimSuffix(strings.TrimPrefix(s, "|"), "|")
+	if s == "" {
+		return false
+	}
+	for _, cell := range strings.Split(s, "|") {
+		cell = strings.TrimSpace(cell)
+		cell = strings.TrimSuffix(strings.TrimPrefix(cell, ":"), ":")
+		if cell == "" || strings.Trim(cell, "-") != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (be *blockExtractor) extractBlockquote(n *ast.Blockquote) {

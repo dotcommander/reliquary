@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.16.1 (2026-10-14)
+
+### Fixed
+
+- Fix `chunking` table extraction losing markdown table delimiter rows.
+  goldmark parses the `|---|` delimiter row into per-column alignment
+  attributes instead of text cells, so AST-based reconstruction silently
+  dropped every delimiter row and normalized cell padding; tables in
+  chunks no longer rendered as tables. `extractMarkdownBlocks` now emits
+  table blocks as verbatim source spans validated line-by-line (pipe rows
+  plus a delimiter row, mirroring the fenced-code source-span pattern),
+  falls back to cell-segment-derived spans when container spans are
+  incomplete, and keeps the AST reconstruction only as a last resort that
+  no longer claims source offsets.
+- Fix `chunking` section re-joining in `splitByLevel`: blocks are
+  re-joined with blank-line separation. Single-newline joins erased block
+  boundaries for the next recursion level, letting goldmark absorb the
+  paragraph following a table into it as a spurious table row and mangling
+  `heading_aware` chunks of oversized sections.
+- Fix `retrieval` context metadata expectations for verbatim table parts:
+  the first synthetic table chunk (a true source fragment) now resolves
+  its context line range exactly, while header-duplicated continuation
+  chunks keep their ranges absent instead of guessed.
+
 ## v0.16.0 (2026-10-12)
 
 ### Added

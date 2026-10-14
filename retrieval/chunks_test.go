@@ -268,14 +268,28 @@ func TestResultsFromDocumentsLeavesUnresolvedRangesAbsent(t *testing.T) {
 			ContextStartLineKey: "999",
 			ContextEndLineKey:   "1000",
 		},
-	}}, chunking.MarkdownAware, 100, 0)
+	}}, chunking.MarkdownAware, 120, 0)
 	if err != nil {
 		t.Fatalf("ResultsFromDocuments() error = %v", err)
 	}
+	// Size 120 fits one body row plus the repeated header+separator prefix,
+	// so every synthetic part stays row-intact (sizes below prefix+row fall
+	// back to EnforceHardLimits hard cuts, a separate path).
 	if len(results) < 2 {
 		t.Fatalf("ResultsFromDocuments() len = %d, want multiple synthetic table chunks: %#v", len(results), results)
 	}
 	for i, result := range results {
+		if i == 0 {
+			// The first synthetic table chunk is a verbatim source fragment
+			// (header + separator + first body rows), so its context lines
+			// resolve exactly.
+			if result.Metadata[ContextStartLineKey] != 1 || result.Metadata[ContextEndLineKey] != 3 {
+				t.Fatalf("result[0] context lines = %v..%v, want 1..3", result.Metadata[ContextStartLineKey], result.Metadata[ContextEndLineKey])
+			}
+			continue
+		}
+		// Continuation chunks repeat the header, so they are not source
+		// fragments and their line ranges must stay absent, not guessed.
 		if _, ok := result.Metadata[ContextStartLineKey]; ok {
 			t.Fatalf("result[%d] retained unresolved start line: %v", i, result.Metadata)
 		}
