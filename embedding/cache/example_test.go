@@ -11,7 +11,7 @@ import (
 func ExampleNew() {
 	base := exampleEmbedder{}
 	store := &exampleStore{entries: make(map[string]cache.Entry)}
-	cached, err := cache.New(base, store, cache.Config{Identity: "example:v1"})
+	cached, err := cache.New(base, store, cache.Config{Identity: "example:v1", CoalesceRequests: true})
 	if err != nil {
 		panic(err)
 	}

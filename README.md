@@ -126,13 +126,24 @@ examples and tests, but it is not a production embedding model.
   render selected passages as neutral context:
 
   ```go
-  rows, err := app.SearchBatch(ctx, []string{question, followup})
+  rows, err := app.SearchBatch(ctx, []string{question, followup},
+      reliquary.WithSearchConcurrency(2))
   hits := rows[0]
   promptBlock, err := retrieval.FormatContext(hits,
       retrieval.WithHeader("[Source: %s, Lines: %d-%d]"),
       retrieval.WithMaxTokens(2048, tokenCounter),
   )
   ```
+
+  `SearchBatch` is sequential by default. `WithSearchConcurrency(n)` opts into at
+  most `n` complete concurrent query pipelines; the last option wins and values
+  below two select sequential execution. Queries still use one validated embedding
+  batch, and output rows retain input order (including blanks and duplicates).
+  Index and reranker dependencies must support concurrent calls and cancellation.
+  An error cancels sibling work and returns no partial rows; all started work is
+  joined, so dependencies ignoring cancellation can delay completion. RRF's two
+  retrieval lanes remain sequential within each query. `Search` accepts the option
+  but still runs one query.
 
   The token counter is caller-supplied, so it can match the model that will
   consume the prompt. Context includes only a contiguous prefix of complete

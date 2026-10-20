@@ -81,7 +81,8 @@ func (a *App) Search(ctx context.Context, query string, opts ...SearchOption) ([
 
 // SearchBatch searches multiple queries while preserving their input order.
 // Blank queries produce nil rows. All nonblank queries are embedded in one
-// ordered call, validated as a complete batch, and searched sequentially.
+// ordered call and validated as a complete batch. Searches are sequential unless
+// WithSearchConcurrency enables bounded concurrent query pipelines.
 func (a *App) SearchBatch(ctx context.Context, queries []string, opts ...SearchOption) ([][]*retrieval.Result, error) {
 	return a.searchQueries(ctx, queries, opts)
 }
@@ -116,6 +117,9 @@ func (a *App) searchQueries(ctx context.Context, queries []string, opts []Search
 	}
 	if err := embedding.ValidateResult(request, embedded); err != nil {
 		return nil, err
+	}
+	if cfg.concurrency >= 2 && len(nonblank) >= 2 {
+		return a.searchConcurrent(ctx, nonblank, positions, embedded.Vectors, cfg, rows)
 	}
 	for i, query := range nonblank {
 		row, err := a.searchEmbedded(ctx, query, embedded.Vectors[i], cfg)
@@ -410,6 +414,7 @@ func cloneSearchFilter(filter map[string]any) map[string]any {
 type SearchOption func(*searchConfig)
 
 type searchConfig struct {
+	concurrency    int
 	k              int
 	kSet           bool
 	mmr            bool

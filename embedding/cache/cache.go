@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/dotcommander/reliquary/embedding"
 	"github.com/dotcommander/reliquary/internal/validate"
@@ -28,6 +29,10 @@ var (
 type Config struct {
 	// Identity namespaces entries by the caller-owned embedding-output contract.
 	Identity string
+	// CoalesceRequests shares identical concurrent nonempty requests within this
+	// decorator. Callers must have interchangeable context-dependent provider and
+	// store semantics; isolate tenant/authentication boundaries by decorator.
+	CoalesceRequests bool
 }
 
 // Entry is one resolved embedding cached by a Store.
@@ -44,11 +49,14 @@ type Store interface {
 }
 
 // Embedder decorates a base embedding.Embedder with a caller-provided Store.
-// Its state is immutable after construction.
+// Configuration is immutable after construction; active flights are synchronized.
 type Embedder struct {
 	base     embedding.Embedder
 	store    Store
 	identity string
+	coalesce bool
+	flightMu sync.Mutex
+	flights  map[string]*flight
 }
 
 // New constructs a Store-backed decorator without performing dependency I/O.
@@ -62,7 +70,7 @@ func New(base embedding.Embedder, store Store, cfg Config) (*Embedder, error) {
 	if strings.TrimSpace(cfg.Identity) == "" {
 		return nil, fmt.Errorf("embedding cache: %w", ErrInvalidIdentity)
 	}
-	return &Embedder{base: base, store: store, identity: cfg.Identity}, nil
+	return &Embedder{base: base, store: store, identity: cfg.Identity, coalesce: cfg.CoalesceRequests}, nil
 }
 
 // Embed embeds request inputs, using cached vectors where available.
@@ -70,6 +78,14 @@ func (e *Embedder) Embed(ctx context.Context, request embedding.Request) (embedd
 	if err := contextError(ctx); err != nil {
 		return embedding.Result{}, err
 	}
+	if e.coalesce && len(request.Inputs) > 0 {
+		request.Inputs = append([]string(nil), request.Inputs...)
+		return e.embedCoalesced(ctx, request)
+	}
+	return e.embed(ctx, request)
+}
+
+func (e *Embedder) embed(ctx context.Context, request embedding.Request) (embedding.Result, error) {
 	if len(request.Inputs) == 0 {
 		result, err := e.base.Embed(ctx, request)
 		if err != nil {
