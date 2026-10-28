@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/dotcommander/reliquary/chunking"
+	"github.com/dotcommander/reliquary/chunkservice"
 	"github.com/dotcommander/reliquary/embedding"
 	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/index/inmem"
@@ -50,6 +51,9 @@ var ErrResultIDConflict = indexcontract.ErrResultIDConflict
 // App is a wired retrieval pipeline. Construct it with New, Quickstart, or
 // InMemory.
 type App struct {
+	chunkerSet       bool
+	chunkingPolicy   *ChunkingOptions
+	chunkService     *chunkservice.Service
 	embedder         embedding.Embedder
 	index            indexcontract.Index
 	strategy         chunking.Strategy
@@ -85,6 +89,9 @@ func New(opts ...Option) (*App, error) {
 	}
 	if !a.indexIdentitySet || strings.TrimSpace(a.indexIdentity) == "" {
 		return nil, ErrInvalidIndexIdentity
+	}
+	if err := a.configureChunking(); err != nil {
+		return nil, err
 	}
 	if validate.IsNil(a.index) {
 		a.index = inmem.New()
@@ -160,6 +167,7 @@ func (a *App) ResetIndex(ctx context.Context) error {
 // WithChunker overrides the chunking strategy and chunk sizing.
 func WithChunker(strategy chunking.Strategy, size, overlap int) Option {
 	return func(a *App) {
+		a.chunkerSet = true
 		a.strategy = strategy
 		a.size = size
 		a.overlap = overlap

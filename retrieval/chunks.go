@@ -66,32 +66,42 @@ func ResultsFromDocuments(docs []document.Document, strategy chunking.Strategy, 
 	for _, doc := range docs {
 		normalized := document.NormalizeText(doc.Text)
 		chunks := chunker.Chunk(normalized, size, overlap)
-		cursor := 0
-		for _, chunk := range chunks {
-			metadata := make(map[string]any, len(doc.Metadata))
-			for key, value := range doc.Metadata {
-				if key == ContextStartLineKey || key == ContextEndLineKey {
-					continue
-				}
-				metadata[key] = value
-			}
-			span, ok := resolveContextChunkSpan(normalized, chunk, cursor)
-			if ok {
-				startLine, endLine := chunking.LineRangeForSpan(normalized, span)
-				metadata[ContextStartLineKey] = startLine
-				metadata[ContextEndLineKey] = endLine
-				cursor = chunking.NextChunkCursor(span)
-			}
-			results = append(results, &Result{
-				ID:         fmt.Sprintf("%s#%d", doc.ID, chunk.ID),
-				DocumentID: doc.ID,
-				Content:    chunk.Text,
-				Filename:   doc.Title,
-				Metadata:   metadata,
-			})
-		}
+		results = append(results, ResultsFromChunks(doc, normalized, chunks)...)
 	}
 	return results, nil
+}
+
+// ResultsFromChunks maps library chunks to retrieval results using the same
+// identifiers, document metadata, and source-line mapping as ResultsFromDocuments.
+// source must be the normalized text from which chunks were produced. The caller
+// validates document IDs before composing a batch.
+func ResultsFromChunks(doc document.Document, source string, chunks []chunking.Chunk) []*Result {
+	results := make([]*Result, 0, len(chunks))
+	cursor := 0
+	for _, chunk := range chunks {
+		metadata := make(map[string]any, len(doc.Metadata))
+		for key, value := range doc.Metadata {
+			if key == ContextStartLineKey || key == ContextEndLineKey {
+				continue
+			}
+			metadata[key] = value
+		}
+		span, ok := resolveContextChunkSpan(source, chunk, cursor)
+		if ok {
+			startLine, endLine := chunking.LineRangeForSpan(source, span)
+			metadata[ContextStartLineKey] = startLine
+			metadata[ContextEndLineKey] = endLine
+			cursor = chunking.NextChunkCursor(span)
+		}
+		results = append(results, &Result{
+			ID:         fmt.Sprintf("%s#%d", doc.ID, chunk.ID),
+			DocumentID: doc.ID,
+			Content:    chunk.Text,
+			Filename:   doc.Title,
+			Metadata:   metadata,
+		})
+	}
+	return results
 }
 
 func resolveContextChunkSpan(source string, chunk chunking.Chunk, cursor int) (chunking.ChunkSpan, bool) {

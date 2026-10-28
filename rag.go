@@ -36,7 +36,7 @@ func (a *App) Ingest(ctx context.Context, docs ...document.Document) (int, error
 		}
 		seen[doc.ID] = struct{}{}
 	}
-	items, err := retrieval.ResultsFromDocuments(docs, a.strategy, a.size, a.overlap)
+	items, err := a.chunkDocuments(ctx, docs)
 	if err != nil {
 		return 0, err
 	}
@@ -61,6 +61,9 @@ func (a *App) Ingest(ctx context.Context, docs ...document.Document) (int, error
 		item.IndexIdentity = a.indexIdentity
 		n := byDocument[item.DocumentID]
 		replacements[n].Results = append(replacements[n].Results, item)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	if err := a.index.ReplaceDocuments(ctx, replacements); err != nil {
 		return 0, err

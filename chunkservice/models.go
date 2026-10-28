@@ -47,6 +47,10 @@ type Request struct {
 	// SeparatorProfile selects the recursive strategy's separator cascade:
 	// "default_text" (empty) or "cjk_thai". Only valid with strategy=recursive.
 	SeparatorProfile SeparatorProfile `json:"separator_profile,omitempty"`
+	// CustomSeparators supplies an ordered recursive cascade instead of a named
+	// profile. nil uses the default; an empty slice is invalid. An omitted
+	// trailing empty separator is appended internally for rune-level fallback.
+	CustomSeparators []string `json:"custom_separators,omitzero"`
 	// Semantic tunes the semantic strategy; zero fields fall back to library
 	// defaults. Only valid with strategy=semantic.
 	Semantic *SemanticOptions `json:"semantic,omitempty"`
@@ -79,6 +83,12 @@ func (r Request) Validate() error {
 		return invalidRequest("text is required")
 	}
 
+	return r.ValidatePolicy()
+}
+
+// ValidatePolicy checks text-independent chunking options for construction-time
+// validation. Validate additionally requires non-empty text at execution time.
+func (r Request) ValidatePolicy() error {
 	if r.ChunkSize <= 0 {
 		return invalidRequest("chunk_size must be greater than 0")
 	}
@@ -115,6 +125,23 @@ func (r Request) validateStrategyCouplings() error {
 		}
 		if r.Strategy != chunking.Recursive {
 			return invalidRequest("separator_profile requires the recursive strategy")
+		}
+	}
+
+	if r.CustomSeparators != nil {
+		if r.Strategy != chunking.Recursive {
+			return invalidRequest("custom_separators requires the recursive strategy")
+		}
+		if r.SeparatorProfile != "" {
+			return invalidRequest("custom_separators and separator_profile are mutually exclusive")
+		}
+		if len(r.CustomSeparators) == 0 {
+			return invalidRequest("custom_separators must not be empty")
+		}
+		for i, separator := range r.CustomSeparators {
+			if separator == "" && i != len(r.CustomSeparators)-1 {
+				return invalidRequest("custom_separators empty fallback must be last")
+			}
 		}
 	}
 
@@ -300,6 +327,7 @@ type BatchRequest struct {
 	Overlap           int               `json:"overlap,omitempty"`
 	TokenEncoding     TokenEncoding     `json:"token_encoding,omitempty"`
 	SeparatorProfile  SeparatorProfile  `json:"separator_profile,omitempty"`
+	CustomSeparators  []string          `json:"custom_separators,omitzero"`
 	Semantic          *SemanticOptions  `json:"semantic,omitempty"`
 	MaxTokens         int               `json:"max_tokens,omitempty"`
 	IncludeEmbeddings bool              `json:"include_embeddings,omitempty"`
@@ -315,6 +343,7 @@ func (r BatchRequest) ToChunkRequest(text string) Request {
 		Overlap:           r.Overlap,
 		TokenEncoding:     r.TokenEncoding,
 		SeparatorProfile:  r.SeparatorProfile,
+		CustomSeparators:  r.CustomSeparators,
 		Semantic:          r.Semantic,
 		MaxTokens:         r.MaxTokens,
 		IncludeEmbeddings: r.IncludeEmbeddings,

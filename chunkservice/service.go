@@ -167,6 +167,12 @@ func buildChunker(strategy chunking.Strategy, req Request) (chunking.Chunker, er
 	switch {
 	case strategy == chunking.TokenBased:
 		return chunking.NewTokenChunker(string(req.TokenEncoding.WithDefault()))
+	case strategy == chunking.Recursive && req.CustomSeparators != nil:
+		separators := append([]string(nil), req.CustomSeparators...)
+		if separators[len(separators)-1] != "" {
+			separators = append(separators, "")
+		}
+		return chunking.NewRecursiveChunker(chunking.SeparatorProfile{Separators: separators}), nil
 	case strategy == chunking.Recursive && req.SeparatorProfile == ProfileCJKThai:
 		return chunking.NewRecursiveChunker(chunking.CJKThaiSeparatorProfile()), nil
 	default:

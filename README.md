@@ -253,4 +253,11 @@ GOWORK=off go test -race . ./index/... ./adapter/...
 ./scripts/verify-modules.sh
 ```
 
+### Fixed App chunking policies
+
+Use `WithChunking(ChunkingOptions{...})` for semantic chunking, recursive
+multilingual/custom separators, optional preflight budgets, and final token
+ceilings. See [App chunking policies](docs/APP-CHUNKING.md) for examples,
+compatibility, identity migration, and prompt-budget limits.
+
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)
