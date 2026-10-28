@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"reflect"
 	"strings"
+	"text/template"
 )
 
 // ContextStartLineKey is the retrieval-owned metadata key for a result's
@@ -27,11 +28,17 @@ type ContextTokenCounter interface {
 type ContextOption func(*contextConfig)
 
 type contextConfig struct {
-	header    string
-	separator string
-	maxTokens int
-	counter   ContextTokenCounter
-	limitSet  bool
+	header          string
+	separator       string
+	maxTokens       int
+	counter         ContextTokenCounter
+	limitSet        bool
+	headerMode      int
+	headerFormatter func(ContextItem) (string, error)
+	citation        string
+	citationSet     bool
+	transform       func(ContextItem) (string, error)
+	transformSet    bool
 }
 
 // WithHeader adds a header before each result's content. The supported
@@ -40,7 +47,50 @@ type contextConfig struct {
 func WithHeader(template string) ContextOption {
 	return func(c *contextConfig) {
 		c.header = template
+		c.headerMode = 0
 	}
+}
+
+// ContextItem describes a passage being formatted. Result and its referenced data
+// must be treated as read-only by callbacks.
+type ContextItem struct {
+	Result             *Result
+	InputIndex         int
+	Number             int
+	Source             string
+	StartLine, EndLine int
+	HasLines           bool
+	Content            string
+}
+
+// FormatSummary maps emitted, omitted, and skipped passages to input positions.
+// TokensUsed is present only when the accepted output was counted.
+type FormatSummary struct {
+	InputCount      int
+	IncludedIndices []int
+	OmittedIndices  []int
+	SkippedIndices  []int
+	TokensUsed      *int
+}
+
+// WithHeaderTemplate selects a text/template header; the last header option wins.
+func WithHeaderTemplate(text string) ContextOption {
+	return func(c *contextConfig) { c.header = text; c.headerMode = 1 }
+}
+
+// WithHeaderFormatter selects a callback to render each header.
+func WithHeaderFormatter(formatter func(ContextItem) (string, error)) ContextOption {
+	return func(c *contextConfig) { c.headerFormatter = formatter; c.headerMode = 2 }
+}
+
+// WithCitationTemplate renders an optional citation before each passage.
+func WithCitationTemplate(text string) ContextOption {
+	return func(c *contextConfig) { c.citation = text; c.citationSet = true }
+}
+
+// WithContentTransform selects the last supplied content transformation.
+func WithContentTransform(transform func(ContextItem) (string, error)) ContextOption {
+	return func(c *contextConfig) { c.transform = transform; c.transformSet = true }
 }
 
 // WithSeparator replaces the default blank-line separator between results.
@@ -65,69 +115,144 @@ func WithMaxTokens(maxTokens int, counter ContextTokenCounter) ContextOption {
 // instructions, escaping, or filtering; by default blocks are joined by one
 // blank line.
 func FormatContext(results []*Result, opts ...ContextOption) (string, error) {
+	text, _, err := FormatContextWithSummary(results, opts...)
+	return text, err
+}
+
+// FormatContextWithSummary formats passages and reports their input positions.
+func FormatContextWithSummary(results []*Result, opts ...ContextOption) (string, FormatSummary, error) {
 	cfg := contextConfig{separator: "\n\n"}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(&cfg)
 		}
 	}
-	if cfg.limitSet {
-		if cfg.maxTokens <= 0 {
-			return "", nil
-		}
-		if cfg.counter == nil {
-			return "", fmt.Errorf("retrieval: positive context token limit requires a token counter")
+	summary := FormatSummary{InputCount: len(results)}
+	if cfg.limitSet && cfg.maxTokens <= 0 {
+		classifySuffix(&summary, results, 0)
+		return "", summary, nil
+	}
+	if cfg.limitSet && cfg.counter == nil {
+		return "", FormatSummary{}, fmt.Errorf("retrieval: positive context token limit requires a token counter")
+	}
+	if cfg.headerMode == 2 && cfg.headerFormatter == nil {
+		return "", FormatSummary{}, fmt.Errorf("retrieval: nil header formatter")
+	}
+	if cfg.transformSet && cfg.transform == nil {
+		return "", FormatSummary{}, fmt.Errorf("retrieval: nil content transform")
+	}
+	var header, citation *template.Template
+	var err error
+	if cfg.headerMode == 1 {
+		header, err = template.New("header").Option("missingkey=error").Parse(cfg.header)
+		if err != nil {
+			return "", FormatSummary{}, fmt.Errorf("retrieval: parse header template: %w", err)
 		}
 	}
-
+	if cfg.citationSet {
+		citation, err = template.New("citation").Option("missingkey=error").Parse(cfg.citation)
+		if err != nil {
+			return "", FormatSummary{}, fmt.Errorf("retrieval: parse citation template: %w", err)
+		}
+	}
 	var formatted strings.Builder
-	blocks := 0
-	for _, result := range results {
+	for i, result := range results {
 		if result == nil || result.Content == "" {
+			summary.SkippedIndices = append(summary.SkippedIndices, i)
 			continue
 		}
-
-		block := formatContextBlock(result, cfg.header)
+		source := result.Filename
+		if source == "" {
+			source = result.DocumentID
+		}
+		if source == "" {
+			source = result.ID
+		}
+		start, end := contextLineRange(result.Metadata)
+		item := ContextItem{Result: result, InputIndex: i, Number: len(summary.IncludedIndices) + 1, Source: source, StartLine: start, EndLine: end, HasLines: start != 0, Content: result.Content}
+		if cfg.transformSet {
+			item.Content, err = cfg.transform(item)
+			if err != nil {
+				return "", FormatSummary{}, fmt.Errorf("retrieval: transform content at input index %d: %w", i, err)
+			}
+			if item.Content == "" {
+				summary.SkippedIndices = append(summary.SkippedIndices, i)
+				continue
+			}
+		}
+		var h, cite string
+		switch cfg.headerMode {
+		case 0:
+			h = formatContextHeader(cfg.header, source, start, end)
+		case 1:
+			h, err = executeContextTemplate(header, item)
+		case 2:
+			h, err = cfg.headerFormatter(item)
+		}
+		if err != nil {
+			return "", FormatSummary{}, fmt.Errorf("retrieval: format header at input index %d: %w", i, err)
+		}
+		if citation != nil {
+			cite, err = executeContextTemplate(citation, item)
+			if err != nil {
+				return "", FormatSummary{}, fmt.Errorf("retrieval: format citation at input index %d: %w", i, err)
+			}
+		}
+		if cite != "" {
+			if h != "" {
+				h = cite + " " + h
+			} else {
+				h = cite
+			}
+		}
+		block := item.Content
+		if h != "" {
+			block = h + "\n" + block
+		}
 		tentative := block
-		if blocks > 0 {
+		if len(summary.IncludedIndices) > 0 {
 			tentative = formatted.String() + cfg.separator + block
 		}
 		if cfg.limitSet {
-			count, err := cfg.counter.Count(tentative)
-			if err != nil {
-				return "", fmt.Errorf("retrieval: count formatted context tokens: %w", err)
+			count, countErr := cfg.counter.Count(tentative)
+			if countErr != nil {
+				return "", FormatSummary{}, fmt.Errorf("retrieval: count formatted context tokens: %w", countErr)
 			}
 			if count < 0 {
-				return "", fmt.Errorf("retrieval: count formatted context tokens: negative count %d", count)
+				return "", FormatSummary{}, fmt.Errorf("retrieval: count formatted context tokens: negative count %d", count)
 			}
 			if count > cfg.maxTokens {
+				summary.OmittedIndices = append(summary.OmittedIndices, i)
+				classifySuffix(&summary, results, i+1)
 				break
 			}
+			summary.TokensUsed = &count
 		}
-
-		if blocks > 0 {
+		if len(summary.IncludedIndices) > 0 {
 			formatted.WriteString(cfg.separator)
 		}
 		formatted.WriteString(block)
-		blocks++
+		summary.IncludedIndices = append(summary.IncludedIndices, i)
 	}
-
-	return formatted.String(), nil
+	return formatted.String(), summary, nil
 }
 
-func formatContextBlock(result *Result, header string) string {
-	if header == "" {
-		return result.Content
+func classifySuffix(summary *FormatSummary, results []*Result, start int) {
+	for i := start; i < len(results); i++ {
+		if results[i] == nil || results[i].Content == "" {
+			summary.SkippedIndices = append(summary.SkippedIndices, i)
+		} else {
+			summary.OmittedIndices = append(summary.OmittedIndices, i)
+		}
 	}
-	source := result.Filename
-	if source == "" {
-		source = result.DocumentID
+}
+
+func executeContextTemplate(t *template.Template, item ContextItem) (string, error) {
+	var out strings.Builder
+	if err := t.Execute(&out, item); err != nil {
+		return "", err
 	}
-	if source == "" {
-		source = result.ID
-	}
-	startLine, endLine := contextLineRange(result.Metadata)
-	return formatContextHeader(header, source, startLine, endLine) + "\n" + result.Content
+	return out.String(), nil
 }
 
 func formatContextHeader(template, source string, startLine, endLine int) string {

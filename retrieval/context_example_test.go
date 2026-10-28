@@ -49,3 +49,27 @@ func ExampleFormatContext() {
 	// [Source: scheduler, Lines: 4-5]
 	// Goroutines are multiplexed onto threads.
 }
+
+func ExampleFormatContextWithSummary() {
+	results := []*retrieval.Result{
+		{Filename: "notes.md", Content: "  First passage  ", Metadata: map[string]any{"title": "Notes"}},
+		{Content: ""},
+		{Filename: "other.md", Content: "Second passage", Metadata: map[string]any{"title": "Other"}},
+	}
+	text, summary, err := retrieval.FormatContextWithSummary(results,
+		retrieval.WithHeaderTemplate("{{.Result.Metadata.title}} — {{.Source}}"),
+		retrieval.WithCitationTemplate("[{{.Number}}]"),
+		retrieval.WithContentTransform(func(item retrieval.ContextItem) (string, error) { return strings.TrimSpace(item.Content), nil }),
+		retrieval.WithMaxTokens(6, wordCounter{}),
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(text)
+	fmt.Println("included:", summary.IncludedIndices, "skipped:", summary.SkippedIndices, "omitted:", summary.OmittedIndices)
+	// Output:
+	// [1] Notes — notes.md
+	// First passage
+	// included: [0] skipped: [1] omitted: [2]
+}
