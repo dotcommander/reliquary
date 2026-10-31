@@ -147,10 +147,7 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 		return err
 	}
 
-	query := fmt.Sprintf(`INSERT INTO %s (id, document_id, filename, content, metadata, embedding, index_identity)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
-		ON CONFLICT (id) DO UPDATE SET document_id = EXCLUDED.document_id, filename = EXCLUDED.filename,
-		content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding, index_identity = EXCLUDED.index_identity`, i.quoted)
+	query := i.upsertQuery()
 	for _, item := range items {
 		if item == nil {
 			continue
@@ -200,63 +197,20 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 			return fmt.Errorf("delete postgres replacement document %q: %w", replacement.DocumentID, err)
 		}
 	}
-	for _, replacement := range replacements {
-		for _, item := range replacement.Results {
-			if item == nil {
-				continue
-			}
-			var retainedDocumentID string
-			err := tx.QueryRow(ctx, fmt.Sprintf(`SELECT document_id FROM %s WHERE id = $1`, i.quoted), item.ID).Scan(&retainedDocumentID)
-			switch {
-			case err == nil:
-				return fmt.Errorf("%w: %q belongs to retained document %q", indexcontract.ErrResultIDConflict, item.ID, retainedDocumentID)
-			case errors.Is(err, pgx.ErrNoRows):
-			case err != nil:
-				return fmt.Errorf("inspect postgres replacement result %q: %w", item.ID, err)
-			}
-		}
+	if err := i.checkRetainedIDs(ctx, tx, replacementItems); err != nil {
+		return err
 	}
-	query := fmt.Sprintf(`INSERT INTO %s (id, document_id, filename, content, metadata, embedding, index_identity)
-		VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
-		ON CONFLICT (id) DO UPDATE SET document_id = EXCLUDED.document_id, filename = EXCLUDED.filename,
-		content = EXCLUDED.content, metadata = EXCLUDED.metadata, embedding = EXCLUDED.embedding, index_identity = EXCLUDED.index_identity`, i.quoted)
 	if err := i.writeState(ctx, tx, space); err != nil {
 		return err
 	}
-	for _, replacement := range replacements {
-		for _, item := range replacement.Results {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if item == nil {
-				continue
-			}
-			if err := upsertItem(ctx, tx, query, item); err != nil {
-				return err
-			}
-		}
+	if err := i.writeReplacementItems(ctx, tx, replacementItems); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit postgres index replacement: %w", err)
-	}
-	return nil
-}
-
-func upsertItem(ctx context.Context, tx pgx.Tx, query string, item *retrieval.Result) error {
-	metadata, err := json.Marshal(item.Metadata)
-	if err != nil {
-		return fmt.Errorf("marshal metadata for %q: %w", item.ID, err)
-	}
-	var vector any
-	if len(item.Embedding) > 0 {
-		values := make([]float32, len(item.Embedding))
-		for n, value := range item.Embedding {
-			values[n] = float32(value)
-		}
-		vector = pgvector.NewVector(values)
-	}
-	if _, err := tx.Exec(ctx, query, item.ID, item.DocumentID, item.Filename, item.Content, metadata, vector, item.IndexIdentity); err != nil {
-		return fmt.Errorf("upsert postgres index item %q: %w", item.ID, err)
 	}
 	return nil
 }
