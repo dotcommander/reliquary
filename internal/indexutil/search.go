@@ -1,7 +1,6 @@
 package indexutil
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -26,25 +25,25 @@ func Search(ctx context.Context, query indexcontract.IndexQuery, items []*retrie
 		if len(query.Vector) > 0 && len(item.Embedding) > 0 && len(query.Vector) != len(item.Embedding) {
 			return nil, fmt.Errorf("%w: query has %d dimensions, item %q has %d", indexcontract.ErrDimensionMismatch, len(query.Vector), item.ID, len(item.Embedding))
 		}
-		cp := clone(item)
-		candidates = append(candidates, cp)
+		// Scoring mutates scalar fields only; payloads stay read-only until
+		// selection so discarded candidates need no deep ownership copy.
+		cp := *item
+		cp.Explain = nil
+		candidates = append(candidates, &cp)
 	}
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	ranked := retrieval.NewScorer(retrieval.DefaultWeights()).RerankEmbedding(query.Vector, query.Text, candidates)
-	// Scorer deliberately ranks only by score. Add an ID tie-break so database
-	// and in-memory implementations expose the same deterministic contract.
-	slices.SortStableFunc(ranked, func(a, b *retrieval.Result) int {
-		if order := cmp.Compare(b.CombinedScore, a.CombinedScore); order != 0 {
-			return order
-		}
-		return cmp.Compare(a.ID, b.ID)
-	})
+	// Rank once with the index's deterministic score/ID tie ordering.
+	ranked := retrieval.NewScorer(retrieval.DefaultWeights()).RerankEmbeddingByID(query.Vector, query.Text, candidates)
 	if query.Limit > 0 && query.Limit < len(ranked) {
 		ranked = ranked[:query.Limit]
 	}
-	return ranked, nil
+	selected := make([]*retrieval.Result, len(ranked))
+	for n, item := range ranked {
+		selected[n] = clone(item)
+	}
+	return selected, nil
 }
 
 // Clone returns a result whose embedding and canonical JSON metadata containers

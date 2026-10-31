@@ -87,3 +87,10 @@ func AttachEmbeddings(results []*Result, vectors []embedding.Vector) error {
 func (s *Scorer) RerankEmbedding(queryEmbedding embedding.Vector, queryText string, results []*Result) []*Result {
 	return s.Rerank(EmbeddingVector(queryEmbedding), queryText, results)
 }
+
+// RerankEmbeddingByID scores results and sorts by descending score, then ID
+// ascending on ties. It leaves RerankEmbedding's score-only ordering unchanged.
+func (s *Scorer) RerankEmbeddingByID(queryEmbedding embedding.Vector, queryText string, results []*Result) []*Result {
+	ranked, _ := s.rerank(EmbeddingVector(queryEmbedding), queryText, results, false, true)
+	return ranked
+}

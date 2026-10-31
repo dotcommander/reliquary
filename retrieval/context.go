@@ -209,11 +209,11 @@ func FormatContextWithSummary(results []*Result, opts ...ContextOption) (string,
 		if h != "" {
 			block = h + "\n" + block
 		}
-		tentative := block
-		if len(summary.IncludedIndices) > 0 {
-			tentative = formatted.String() + cfg.separator + block
-		}
 		if cfg.limitSet {
+			tentative := block
+			if len(summary.IncludedIndices) > 0 {
+				tentative = formatted.String() + cfg.separator + block
+			}
 			count, countErr := cfg.counter.Count(tentative)
 			if countErr != nil {
 				return "", FormatSummary{}, fmt.Errorf("retrieval: count formatted context tokens: %w", countErr)

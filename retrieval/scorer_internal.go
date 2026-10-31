@@ -37,16 +37,18 @@ func usesDefaultTextWeights(weights Weights) bool {
 		weights.Filename == defaults.Filename
 }
 
-func computeAndStoreRawSignals(queryEmbedding []float64, queryText string, result *Result, channels *scoreChannels) (ScoreSignals, SignalPresence) {
+func computeAndStoreRawSignals(queryEmbedding []float64, queryTokens []string, result *Result, channels *scoreChannels) (ScoreSignals, SignalPresence) {
 	var raw ScoreSignals
 	var present SignalPresence
 	result.EmbeddingScore = 0
 	result.KeywordScore = 0
 	result.FilenameScore = 0
 	result.CombinedScore = 0
-	queryTokens := tokenize(queryText)
-	contentTokens := tokenize(result.Content)
-	filenameTokens := tokenize(result.Filename)
+	var contentTokens, filenameTokens []string
+	if len(queryTokens) > 0 {
+		contentTokens = tokenize(result.Content)
+		filenameTokens = tokenize(result.Filename)
+	}
 	hasEmbedding := len(queryEmbedding) > 0
 
 	if hasEmbedding && len(result.Embedding) > 0 {

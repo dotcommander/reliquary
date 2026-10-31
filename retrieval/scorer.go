@@ -138,22 +138,34 @@ func RecencyFromAge(age, halfLife float64) float64 {
 
 // Rerank scores and sorts results by combined score (descending).
 func (s *Scorer) Rerank(queryEmbedding []float64, queryText string, results []*Result) []*Result {
-	ranked, _ := s.rerank(queryEmbedding, queryText, results, false)
+	ranked, _ := s.rerank(queryEmbedding, queryText, results, false, false)
 	return ranked
 }
 
 // RerankWithTrace scores and sorts results, returning one trace per ranked result
 // in the same order as the returned result slice.
 func (s *Scorer) RerankWithTrace(queryEmbedding []float64, queryText string, results []*Result) ([]*Result, []ScoreTrace) {
-	return s.rerank(queryEmbedding, queryText, results, true)
+	return s.rerank(queryEmbedding, queryText, results, true, false)
 }
 
-func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*Result, trace bool) ([]*Result, []ScoreTrace) {
+func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*Result, trace, tieByID bool) ([]*Result, []ScoreTrace) {
+	return s.scoreResults(queryEmbedding, queryText, results, trace, tieByID, true)
+}
+
+// ScoreBatch applies the same corpus calibration as Rerank without changing
+// the order of results. Unlike Score, its scores are corpus-relative.
+func (s *Scorer) ScoreBatch(queryEmbedding []float64, queryText string, results []*Result) []*Result {
+	scored, _ := s.scoreResults(queryEmbedding, queryText, results, false, false, false)
+	return scored
+}
+
+func (s *Scorer) scoreResults(queryEmbedding []float64, queryText string, results []*Result, trace, tieByID, sortResults bool) ([]*Result, []ScoreTrace) {
 	if len(results) == 0 {
 		return results, nil
 	}
 
-	queryTokenCount := len(tokenize(queryText))
+	queryTokens := tokenize(queryText)
+	queryTokenCount := len(queryTokens)
 	weights, adaptiveWeights := s.effectiveWeights(queryTokenCount)
 
 	channels := scoreChannels{}
@@ -164,7 +176,7 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 	}
 
 	for _, result := range results {
-		rawSignals, signalPresence := computeAndStoreRawSignals(queryEmbedding, queryText, result, &channels)
+		rawSignals, signalPresence := computeAndStoreRawSignals(queryEmbedding, queryTokens, result, &channels)
 		presenceByResult[result] = signalPresence
 		if trace {
 			tracesByResult[result] = scoreTraceState{raw: rawSignals, present: signalPresence}
@@ -177,9 +189,14 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 		result.CombinedScore = weightedScore(weights, resultScoreSignals(result))
 	}
 
-	slices.SortFunc(results, func(a, b *Result) int {
-		return cmp.Compare(b.CombinedScore, a.CombinedScore)
-	})
+	if sortResults {
+		slices.SortFunc(results, func(a, b *Result) int {
+			if order := cmp.Compare(b.CombinedScore, a.CombinedScore); order != 0 || !tieByID {
+				return order
+			}
+			return cmp.Compare(a.ID, b.ID)
+		})
+	}
 
 	if !trace {
 		return results, nil
@@ -209,7 +226,7 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 // The returned CombinedScore must NOT be compared against scores produced by
 // Rerank, which applies corpus-relative min-max calibration before scoring.
 func (s *Scorer) Score(queryEmbedding []float64, queryText string, result *Result) float64 {
-	computeAndStoreRawSignals(queryEmbedding, queryText, result, nil)
+	computeAndStoreRawSignals(queryEmbedding, tokenize(queryText), result, nil)
 	result.CombinedScore = weightedScore(s.weights, resultScoreSignals(result))
 	return result.CombinedScore
 }
