@@ -57,33 +57,6 @@ func New(db *sql.DB, cfg Config) (*Index, error) {
 	return &Index{db: db, table: cfg.Table, ftsTable: cfg.Table + "_fts", stateTable: cfg.Table + "_state", candidateLimit: cfg.CandidateLimit}, nil
 }
 
-// Migrate creates only the retrieval-owned schema and is safe to repeat.
-func (i *Index) Migrate(ctx context.Context) error {
-	return withTx(ctx, i.db, func(tx *sql.Tx) error {
-		statements := []string{
-			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, filename TEXT NOT NULL, content TEXT NOT NULL, metadata TEXT NOT NULL, embedding TEXT NOT NULL, index_identity TEXT NOT NULL DEFAULT '')`, i.table),
-			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_document_id ON %s(document_id)`, i.table, i.table),
-			fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(id UNINDEXED, content, filename)`, i.ftsTable),
-			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), index_identity TEXT, embedding_dimension INTEGER CHECK (embedding_dimension IS NULL OR embedding_dimension > 0))`, i.stateTable),
-		}
-		for _, statement := range statements {
-			if _, err := tx.ExecContext(ctx, statement); err != nil {
-				return fmt.Errorf("migrate sqlite index: %w", err)
-			}
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN index_identity TEXT NOT NULL DEFAULT ''`, i.table)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-			return fmt.Errorf("migrate sqlite index identity: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.ftsTable)); err != nil {
-			return fmt.Errorf("rebuild sqlite FTS index: %w", err)
-		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) SELECT id, content, filename FROM %s`, i.ftsTable, i.table)); err != nil {
-			return fmt.Errorf("repopulate sqlite FTS index: %w", err)
-		}
-		return i.backfillState(ctx, tx)
-	})
-}
-
 func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -237,7 +210,7 @@ func (i *Index) Reset(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.table)); err != nil {
 			return fmt.Errorf("sqlite index: reset: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.stateTable)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, fts_version) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET index_identity=NULL, embedding_dimension=NULL, fts_version=excluded.fts_version`, i.stateTable), currentFTSVersion); err != nil {
 			return fmt.Errorf("sqlite index: reset state: %w", err)
 		}
 		return nil
@@ -292,6 +265,7 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 		orderBy = "bm25(" + i.ftsTable + "), r.id"
 	}
 	statement := fmt.Sprintf(`SELECT r.id, r.document_id, r.filename, r.content, r.metadata, r.embedding, r.index_identity FROM %s%s ORDER BY %s`, from, where, orderBy)
+	statement, args = boundCandidateQuery(statement, args, query.Filter, limit)
 	rows, err := tx.QueryContext(ctx, statement, args...)
 	if err != nil {
 		return nil, fmt.Errorf("sqlite index: select candidates: %w", err)

@@ -43,15 +43,28 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 // before the index is used.
 type Config struct {
 	Table string
+	// LexicalCandidateLimit enables bounded PostgreSQL full-text candidates for
+	// text-only searches when positive. The SQL limit is at least a positive
+	// query limit. Zero preserves exhaustive Go ranking, including late winners.
+	// Full-text matching may exclude results Go lexical ranking would find;
+	// stop-word-only queries can return no candidates. A matching GIN expression
+	// index is caller-managed; Migrate does not create it.
+	LexicalCandidateLimit int
+	// TextSearchConfig is required with LexicalCandidateLimit (e.g. "english"
+	// or "simple"). It must be a single PostgreSQL configuration name;
+	// PostgreSQL resolves that name at search time via a regconfig parameter.
+	TextSearchConfig string
 }
 
 // Index stores retrieval candidates in a caller-owned PostgreSQL pool.
 type Index struct {
-	pool        transactionPool
-	table       string
-	quoted      string
-	stateTable  string
-	stateQuoted string
+	pool                  transactionPool
+	table                 string
+	quoted                string
+	stateTable            string
+	stateQuoted           string
+	lexicalCandidateLimit int
+	textSearchConfig      string
 }
 
 // New validates configuration without connecting or performing migrations.
@@ -65,8 +78,16 @@ func New(pool *pgxpool.Pool, cfg Config) (*Index, error) {
 	if err := validateIdentifier(cfg.Table); err != nil {
 		return nil, fmt.Errorf("postgres index table: %w", err)
 	}
+	if cfg.LexicalCandidateLimit < 0 {
+		return nil, fmt.Errorf("postgres lexical candidate limit must not be negative")
+	}
+	if cfg.LexicalCandidateLimit > 0 {
+		if err := validateIdentifier(cfg.TextSearchConfig); err != nil {
+			return nil, fmt.Errorf("postgres text search config: %w", err)
+		}
+	}
 	stateTable := boundedStateTableName(cfg.Table)
-	return &Index{pool: pool, table: cfg.Table, quoted: (pgx.Identifier{cfg.Table}).Sanitize(), stateTable: stateTable, stateQuoted: (pgx.Identifier{stateTable}).Sanitize()}, nil
+	return &Index{pool: pool, table: cfg.Table, quoted: (pgx.Identifier{cfg.Table}).Sanitize(), stateTable: stateTable, stateQuoted: (pgx.Identifier{stateTable}).Sanitize(), lexicalCandidateLimit: cfg.LexicalCandidateLimit, textSearchConfig: cfg.TextSearchConfig}, nil
 }
 
 // Migrate idempotently creates retrieval-owned PostgreSQL schema. It is never
@@ -147,14 +168,11 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 		return err
 	}
 
-	query := i.upsertQuery()
-	for _, item := range items {
-		if item == nil {
-			continue
-		}
-		if err := upsertItem(ctx, tx, query, item); err != nil {
-			return err
-		}
+	if err := i.writeBatchedItems(ctx, tx, items, "upsert"); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit postgres index upsert: %w", err)
@@ -203,7 +221,7 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 	if err := i.writeState(ctx, tx, space); err != nil {
 		return err
 	}
-	if err := i.writeReplacementItems(ctx, tx, replacementItems); err != nil {
+	if err := i.writeBatchedItems(ctx, tx, replacementItems, "replacement"); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -257,9 +275,10 @@ func (i *Index) Reset(ctx context.Context) error {
 }
 
 // Search retrieves candidates in PostgreSQL and performs final Reliquary
-// scoring. Text-only queries read every filter-matching row before lexical ranking,
-// so their read and memory cost grows with the matching corpus. Vector queries
-// retain the SQL candidate bound.
+// scoring. By default text-only queries read every filter-matching row before
+// lexical ranking, retaining late relevance winners. Opt-in full-text candidate
+// retrieval bounds rows but can miss winners under Go's different ranking.
+// Vector and hybrid queries retain their existing SQL candidate bound.
 func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -442,6 +461,9 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 		order = fmt.Sprintf(`embedding <=> $%d NULLS LAST, id ASC`, len(args))
 	}
 	statement := fmt.Sprintf(`SELECT id, document_id, filename, content, metadata, embedding, index_identity FROM %s`, i.quoted)
+	if i.lexicalCandidateLimit > 0 && query.Text != "" && len(query.Vector) == 0 {
+		return i.lexicalCandidateQuery(statement, where, args, query)
+	}
 	if len(where) > 0 {
 		statement += ` WHERE ` + strings.Join(where, ` AND `)
 	}

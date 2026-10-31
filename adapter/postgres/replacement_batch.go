@@ -75,18 +75,7 @@ func itemArguments(item *retrieval.Result) ([]any, error) {
 	return []any{item.ID, item.DocumentID, item.Filename, item.Content, metadata, vector, item.IndexIdentity}, nil
 }
 
-func upsertItem(ctx context.Context, tx pgx.Tx, query string, item *retrieval.Result) error {
-	args, err := itemArguments(item)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, query, args...); err != nil {
-		return fmt.Errorf("upsert postgres index item %q: %w", item.ID, err)
-	}
-	return nil
-}
-
-func (i *Index) writeReplacementItems(ctx context.Context, tx pgx.Tx, items []*retrieval.Result) error {
+func (i *Index) writeBatchedItems(ctx context.Context, tx pgx.Tx, items []*retrieval.Result, operation string) error {
 	query := i.upsertQuery()
 	for start := 0; start < len(items); start += replacementBatchSize {
 		if err := ctx.Err(); err != nil {
@@ -117,7 +106,7 @@ func (i *Index) writeReplacementItems(ctx context.Context, tx pgx.Tx, items []*r
 			}
 		}
 		if err := results.Close(); err != nil {
-			return fmt.Errorf("close postgres replacement batch: %w", err)
+			return fmt.Errorf("close postgres %s batch: %w", operation, err)
 		}
 	}
 	return ctx.Err()

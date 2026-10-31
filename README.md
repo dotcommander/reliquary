@@ -73,6 +73,12 @@ examples and tests, but it is not a production embedding model.
   )
   ```
 
+  `TopK` limits final results, not the candidate pool. Set `CandidateLimit`
+  explicitly for large indexes to bound downstream reranking and MMR work.
+  Smaller pools can change recall and diversity; compare retrieval quality on
+  representative queries before reducing the limit. Index-side scan costs
+  depend on the backend even when the returned candidate set is bounded.
+
 - Fuse independent vector and lexical rankings before TopK or MMR:
 
   ```go
