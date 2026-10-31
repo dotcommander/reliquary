@@ -96,15 +96,8 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		remove := false
-		for documentID := range seen {
-			if item.DocumentID == documentID {
-				remove = true
-				break
-			}
-		}
-		if !remove {
-			next[id] = indexutil.Clone(item)
+		if _, replaced := seen[item.DocumentID]; !replaced {
+			next[id] = item
 		}
 	}
 	for _, replacement := range replacements {
@@ -159,7 +152,7 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 			i.mu.RUnlock()
 			return nil, err
 		}
-		items = append(items, indexutil.Clone(item))
+		items = append(items, item)
 	}
 	space := i.space
 	i.mu.RUnlock()
