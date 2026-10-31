@@ -243,6 +243,43 @@ func TestSemanticScopeIsolation(t *testing.T) {
 	}
 }
 
+func TestSemanticSnapshotOnlyCopiesMatchingScope(t *testing.T) {
+	t.Parallel()
+
+	store := newSemanticTestStore(t, &fakeEmbedder{}, 0)
+	ctx := context.Background()
+	key := semanticScoreKey("local")
+	others := []Key{
+		{Tenant: "other", Schema: key.Schema, Primitive: key.Primitive, Fingerprint: "tenant"},
+		{Tenant: key.Tenant, Schema: "other", Primitive: key.Primitive, Fingerprint: "schema"},
+		{Tenant: key.Tenant, Schema: key.Schema, Primitive: PrimitiveNoul, Fingerprint: "primitive"},
+	}
+	for _, other := range others[:2] {
+		if err := store.PutScore(ctx, other, "alpha parallel one", judgment.Score{Value: 99}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.PutNoul(ctx, others[2], "alpha parallel one", judgment.Noul{Verdict: judgment.VerdictYes}); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.scopeSnapshot(key); len(got) != 0 {
+		t.Fatalf("empty scope snapshot contains %d unrelated items", len(got))
+	}
+	if err := store.PutScore(ctx, key, "alpha parallel one", judgment.Score{Value: 7}); err != nil {
+		t.Fatal(err)
+	}
+	items := store.scopeSnapshot(key)
+	if len(items) != 1 || items[key] == nil {
+		t.Fatalf("scope snapshot = %v, want only local item", items)
+	}
+	if err := store.PutScore(ctx, key, "alpha parallel two", judgment.Score{Value: 8}); err != nil {
+		t.Fatal(err)
+	}
+	if items := store.scopeSnapshot(key); len(items) != 1 || items[key].Value().score.Value != 8 {
+		t.Fatalf("replacement snapshot = %v, want updated local item", items)
+	}
+}
+
 func TestSemanticEmptyInputNeverEmbeds(t *testing.T) {
 	t.Parallel()
 

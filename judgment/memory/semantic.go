@@ -8,7 +8,6 @@ import (
 
 	"github.com/dotcommander/reliquary/embedding"
 	"github.com/dotcommander/reliquary/judgment"
-	"github.com/dotcommander/reliquary/vector"
 	"github.com/jellydator/ttlcache/v3"
 )
 
@@ -26,6 +25,10 @@ type SemanticStore struct {
 	model     embedding.ModelRef
 	threshold float32
 	closeOnce sync.Once
+
+	setMu    sync.Mutex
+	scopedMu sync.RWMutex
+	scoped   map[semanticScope]map[Key]*ttlcache.Item[Key, semanticEntry]
 
 	exactHits    atomic.Uint64
 	semanticHits atomic.Uint64
@@ -126,7 +129,11 @@ func NewSemantic(cfg SemanticConfig, opts ...Option) (*SemanticStore, error) {
 		embedder:  cfg.Embedder,
 		model:     cfg.Model,
 		threshold: threshold,
+		scoped:    make(map[semanticScope]map[Key]*ttlcache.Item[Key, semanticEntry]),
 	}
+	cache.OnEviction(func(_ context.Context, _ ttlcache.EvictionReason, item *ttlcache.Item[Key, semanticEntry]) {
+		store.removeScoped(item)
+	})
 	go cache.Start() // Cleanup goroutine: exits when Close calls Stop.
 	return store, nil
 }
@@ -177,7 +184,7 @@ func (s *SemanticStore) PutChoice(ctx context.Context, key Key, rawInput string,
 		return err
 	}
 	stored := copyChoice(result)
-	s.cache.Set(key, semanticEntry{choice: &stored, vec: vec}, putTTL(opts))
+	s.setEntry(key, semanticEntry{choice: &stored, vec: vec}, putTTL(opts))
 	s.insertions.Add(1)
 	return nil
 }
@@ -211,7 +218,7 @@ func (s *SemanticStore) PutScore(ctx context.Context, key Key, rawInput string, 
 		return err
 	}
 	stored := result
-	s.cache.Set(key, semanticEntry{score: &stored, vec: vec}, putTTL(opts))
+	s.setEntry(key, semanticEntry{score: &stored, vec: vec}, putTTL(opts))
 	s.insertions.Add(1)
 	return nil
 }
@@ -245,7 +252,7 @@ func (s *SemanticStore) PutNoul(ctx context.Context, key Key, rawInput string, r
 		return err
 	}
 	stored := result
-	s.cache.Set(key, semanticEntry{noul: &stored, vec: vec}, putTTL(opts))
+	s.setEntry(key, semanticEntry{noul: &stored, vec: vec}, putTTL(opts))
 	s.insertions.Add(1)
 	return nil
 }
@@ -262,35 +269,13 @@ func (s *SemanticStore) scan(ctx context.Context, key Key, rawInput string) (sem
 	if err != nil {
 		return semanticEntry{}, Hit{}, err
 	}
-	best, bestSim, found := closestSemanticEntry(s.cache.Items(), key, query)
+	best, bestSim, found := closestSemanticEntry(s.scopeSnapshot(key), key, query)
 	if found && bestSim >= s.threshold {
 		s.semanticHits.Add(1)
 		return best, Hit{Kind: HitSemantic, Similarity: bestSim}, nil
 	}
 	s.misses.Add(1)
 	return semanticEntry{}, Hit{}, nil
-}
-
-// closestSemanticEntry ranks a nonexpired Items snapshot without traversing the
-// cache's mutable LRU list. Item.Value synchronizes reads with cache updates.
-func closestSemanticEntry(items map[Key]*ttlcache.Item[Key, semanticEntry], key Key, query []float32) (semanticEntry, float32, bool) {
-	var best semanticEntry
-	var bestSim float32
-	var found bool
-	for storedKey, item := range items {
-		if storedKey.Tenant != key.Tenant || storedKey.Schema != key.Schema || storedKey.Primitive != key.Primitive {
-			continue
-		}
-		entry := item.Value()
-		if len(entry.vec) == 0 {
-			continue
-		}
-		sim := vectors.Cosine32(query, entry.vec)
-		if !found || sim > bestSim {
-			found, best, bestSim = true, entry, sim
-		}
-	}
-	return best, bestSim, found
 }
 
 // embed embeds one judgment input as a query and validates the result

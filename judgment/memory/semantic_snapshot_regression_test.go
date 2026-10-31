@@ -104,7 +104,7 @@ func TestSemanticLookupAllowsMutationWhileEmbedding(t *testing.T) {
 	<-started
 	// This insertion must finish before releasing the embedder: no cache lock
 	// may be held across Embed, and the production lookup must snapshot afterward.
-	store.cache.Set(semanticScoreKey("inserted"), snapshotScore(77, []float32{1, 0, 0}), ttlcache.DefaultTTL)
+	store.setEntry(semanticScoreKey("inserted"), snapshotScore(77, []float32{1, 0, 0}), ttlcache.DefaultTTL)
 	close(release)
 	got := <-result
 	if got.err != nil || got.hit.Kind != HitSemantic || got.score.Value != 77 {
@@ -118,14 +118,14 @@ func TestSemanticLookupWithConcurrentCacheMutation(t *testing.T) {
 		return embedding.Result{Model: request.Model, Vectors: []embedding.Vector{{1, 0, 0}}}, nil
 	}))
 	winner := semanticScoreKey("stable winner")
-	store.cache.Set(winner, snapshotScore(88, []float32{1, 0, 0}), ttlcache.DefaultTTL)
+	store.setEntry(winner, snapshotScore(88, []float32{1, 0, 0}), ttlcache.DefaultTTL)
 	start := make(chan struct{})
 	done := make(chan struct{})
 	go func() { // Exits after the start signal and 512 mutation iterations.
 		<-start
 		for i := range 512 {
 			key := semanticScoreKey(fmt.Sprintf("transient-%d", i))
-			store.cache.Set(key, snapshotScore(10, []float32{0, 1, 0}), ttlcache.DefaultTTL)
+			store.setEntry(key, snapshotScore(10, []float32{0, 1, 0}), ttlcache.DefaultTTL)
 			store.cache.Get(winner) // Move the stable candidate in the mutable LRU list.
 			store.cache.Delete(key)
 			runtime.Gosched()
