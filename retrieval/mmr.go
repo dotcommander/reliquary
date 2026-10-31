@@ -53,51 +53,54 @@ func diversify(results []*Result, k int, lambda float64, trace bool) ([]*Result,
 	}
 	return selectMMR(candidates, k, lambda, func(result *Result) float64 {
 		return result.CombinedScore
-	}, maxResultSimilarity, trace)
-}
-
-func maxResultSimilarity(item *Result, selected []*Result) float64 {
-	if len(item.Embedding) == 0 {
-		return 0
-	}
-	maxSim := 0.0
-	for _, existing := range selected {
-		if len(existing.Embedding) == 0 {
-			continue
+	}, func(item, selected *Result) float64 {
+		if len(item.Embedding) == 0 || len(selected.Embedding) == 0 {
+			return 0
 		}
-		sim := vectors.Cosine64(item.Embedding, existing.Embedding)
-		if sim > maxSim {
-			maxSim = sim
-		}
-	}
-	return maxSim
+		return vectors.Cosine64(item.Embedding, selected.Embedding)
+	}, trace)
 }
 
 func MMR(items []MMRItem, k int, lambda float64) []MMRItem {
 	selected, _ := selectMMR(items, k, lambda, func(item MMRItem) float64 {
 		return item.Score
-	}, maxSimilarity, false)
+	}, func(item, selected MMRItem) float64 {
+		if len(item.Embedding) == 0 || len(selected.Embedding) == 0 {
+			return 0
+		}
+		return vectors.Cosine64(item.Embedding, selected.Embedding)
+	}, false)
 	return selected
 }
 
-func selectMMR[T any](items []T, k int, lambda float64, relevance func(T) float64, similarity func(T, []T) float64, trace bool) ([]T, []MMRExplanation) {
+func selectMMR[T any](items []T, k int, lambda float64, relevance func(T) float64, similarity func(T, T) float64, trace bool) ([]T, []MMRExplanation) {
 	if k <= 0 || len(items) == 0 {
 		return nil, nil
 	}
 	lambda = clamp01(lambda)
 	remaining := append([]T(nil), items...)
+	maxSimilarities := make([]float64, len(remaining))
 	selected := make([]T, 0, min(k, len(items)))
 	var traces []MMRExplanation
 	if trace {
 		traces = make([]MMRExplanation, 0, cap(selected))
 	}
 	for len(remaining) > 0 && len(selected) < k {
+		// Only the newest selection can raise a remaining item's maximum.
+		if len(selected) > 0 {
+			newest := selected[len(selected)-1]
+			for i, item := range remaining {
+				if sim := similarity(item, newest); sim > maxSimilarities[i] {
+					maxSimilarities[i] = sim
+				}
+			}
+		}
 		bestIdx := 0
 		bestScore := math.Inf(-1)
 		bestSimilarity := 0.0
 		hasBest := false
 		for i, item := range remaining {
-			itemSimilarity := similarity(item, selected)
+			itemSimilarity := maxSimilarities[i]
 			score := lambda*relevance(item) - (1-lambda)*itemSimilarity
 			if i == 0 {
 				bestSimilarity = itemSimilarity
@@ -128,6 +131,7 @@ func selectMMR[T any](items []T, k int, lambda float64, relevance func(T) float6
 			})
 		}
 		remaining = append(remaining[:bestIdx], remaining[bestIdx+1:]...)
+		maxSimilarities = append(maxSimilarities[:bestIdx], maxSimilarities[bestIdx+1:]...)
 	}
 	return selected, traces
 }
