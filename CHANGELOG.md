@@ -12,6 +12,7 @@
 
 ### Changed
 
+- Update existing PostgreSQL, OpenAI, Markdown, SQLite, and supporting dependencies.
 - Reduce redundant scoring, sorting, copying, and source-offset scans while
   retaining full-pool score calibration and deterministic index ordering.
 - Batch PostgreSQL maintenance and SQLite replacement FTS cleanup; preserve
