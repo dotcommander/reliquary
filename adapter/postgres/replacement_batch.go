@@ -14,6 +14,31 @@ import (
 // Limit both the number of IDs per lookup and queued statements per round trip.
 const replacementBatchSize = 256
 
+func (i *Index) deleteBatchedDocuments(ctx context.Context, tx pgx.Tx, replacements []indexcontract.DocumentReplacement) error {
+	query := fmt.Sprintf(`DELETE FROM %s WHERE document_id = $1`, i.quoted)
+	for start := 0; start < len(replacements); start += replacementBatchSize {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(start+replacementBatchSize, len(replacements))
+		var batch pgx.Batch
+		for _, replacement := range replacements[start:end] {
+			batch.Queue(query, replacement.DocumentID)
+		}
+		results := tx.SendBatch(ctx, &batch)
+		for _, replacement := range replacements[start:end] {
+			if _, err := results.Exec(); err != nil {
+				_ = results.Close()
+				return fmt.Errorf("delete postgres replacement document %q: %w", replacement.DocumentID, err)
+			}
+		}
+		if err := results.Close(); err != nil {
+			return fmt.Errorf("close postgres replacement delete batch: %w", err)
+		}
+	}
+	return ctx.Err()
+}
+
 func (i *Index) checkRetainedIDs(ctx context.Context, tx pgx.Tx, items []*retrieval.Result) error {
 	query := fmt.Sprintf(`SELECT id, document_id FROM %s WHERE id = ANY($1::text[]) ORDER BY array_position($1::text[], id) LIMIT 1`, i.quoted)
 	for start := 0; start < len(items); start += replacementBatchSize {

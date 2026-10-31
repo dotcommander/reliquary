@@ -34,11 +34,8 @@ func Search(ctx context.Context, query indexcontract.IndexQuery, items []*retrie
 	if len(candidates) == 0 {
 		return nil, nil
 	}
-	// Rank once with the index's deterministic score/ID tie ordering.
-	ranked := retrieval.NewScorer(retrieval.DefaultWeights()).RerankEmbeddingByID(query.Vector, query.Text, candidates)
-	if query.Limit > 0 && query.Limit < len(ranked) {
-		ranked = ranked[:query.Limit]
-	}
+	// Calibrate against every candidate before selecting the limited score/ID prefix.
+	ranked := retrieval.NewScorer(retrieval.DefaultWeights()).RerankTopByID(retrieval.EmbeddingVector(query.Vector), query.Text, candidates, query.Limit)
 	selected := make([]*retrieval.Result, len(ranked))
 	for n, item := range ranked {
 		selected[n] = clone(item)

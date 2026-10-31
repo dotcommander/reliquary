@@ -252,6 +252,10 @@ func calculateTotalTokens(req Request, strategy chunking.Strategy) (int, error) 
 // span into rune offsets against source; unmappable spans normalize to (0,0).
 func FromLibChunk(source string, c chunking.Chunk) Chunk {
 	start, end := chunking.RuneSpan(source, c.StartChar, c.EndChar)
+	return projectLibChunk(c, start, end)
+}
+
+func projectLibChunk(c chunking.Chunk, start, end int) Chunk {
 	return Chunk{
 		ID:          c.ID,
 		StartChar:   start,
@@ -269,8 +273,16 @@ func FromLibChunk(source string, c chunking.Chunk) Chunk {
 // FromLibChunks maps a slice of library chunks to wire DTOs against source.
 func FromLibChunks(source string, in []chunking.Chunk) []Chunk {
 	out := make([]Chunk, len(in))
+	if len(in) < 2 {
+		for i := range in {
+			out[i] = FromLibChunk(source, in[i])
+		}
+		return out
+	}
+	offsets := chunking.NewSourceOffsets(source)
 	for i := range in {
-		out[i] = FromLibChunk(source, in[i])
+		start, end := offsets.RuneSpan(in[i].StartChar, in[i].EndChar)
+		out[i] = projectLibChunk(in[i], start, end)
 	}
 	return out
 }

@@ -22,7 +22,13 @@ func TestScopedSnapshotExcludesEvictionsBeforeCallbackAndKeepsReplacements(t *te
 	if got := store.scopeSnapshot(first); len(got) != 0 {
 		t.Fatalf("evicted item leaked into snapshot: %v", got)
 	}
+	if store.hasScopedCandidate(first) {
+		t.Fatal("evicted item admitted an embedding before cleanup")
+	}
 	store.setEntry(first, snapshotScore(3, []float32{1, 0, 0}), ttlcache.NoTTL)
+	if !store.hasScopedCandidate(first) {
+		t.Fatal("replacement was not eligible after delayed eviction")
+	}
 	store.removeScoped(old)
 	got := store.scopeSnapshot(first)
 	if len(got) != 1 || got[first] == old || got[first].Value().score.Value != 3 {

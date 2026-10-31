@@ -73,9 +73,6 @@ func TestReplaceDocumentsBatchesRetainedChecksAndWrites(t *testing.T) {
 			if c != ctx {
 				t.Error("exec context changed")
 			}
-			if strings.Contains(sql, "DELETE FROM") {
-				deleted++
-			}
 			return pgconn.CommandTag{}, nil
 		},
 		queryRow: func(c context.Context, _ string, _ ...any) pgx.Row {
@@ -110,7 +107,13 @@ func TestReplaceDocumentsBatchesRetainedChecksAndWrites(t *testing.T) {
 	// SendBatch is supplied by this test wrapper.
 	wrapped := &batchedFixtureTx{fixtureTx: tx, send: func(c context.Context, batch *pgx.Batch) pgx.BatchResults {
 		if c != ctx || batch.Len() > replacementBatchSize || batch.Len() == 0 {
-			t.Error("unbounded or wrong-context write batch")
+			t.Error("unbounded or wrong-context batch")
+		}
+		if strings.Contains(batch.QueuedQueries[0].SQL, "DELETE FROM") {
+			deleted += batch.Len()
+			r := &replacementBatchResults{remaining: batch.Len()}
+			batches = append(batches, r)
+			return r
 		}
 		if got := batch.QueuedQueries[0].Arguments[0]; got != fmt.Sprintf("id-%d", written) {
 			t.Errorf("batch starts at %v, want id-%d", got, written)
@@ -125,7 +128,7 @@ func TestReplaceDocumentsBatchesRetainedChecksAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !committed || deleted != 1 || checked != len(items) || written != len(items) || len(batches) != 2 || len(rows) != 2 {
+	if !committed || deleted != 1 || checked != len(items) || written != len(items) || len(batches) != 3 || len(rows) != 2 {
 		t.Fatalf("commit=%t deletes=%d checks=%d writes=%d batches=%d rows=%d", committed, deleted, checked, written, len(batches), len(rows))
 	}
 	for _, r := range rows {
@@ -180,6 +183,9 @@ func TestReplaceDocumentsBatchErrorsRollback(t *testing.T) {
 				commit:   func(context.Context) error { committed = true; return nil },
 				rollback: func(context.Context) error { rollbacks++; return nil },
 			}, send: func(_ context.Context, b *pgx.Batch) pgx.BatchResults {
+				if strings.Contains(b.QueuedQueries[0].SQL, "DELETE FROM") {
+					return &replacementBatchResults{remaining: b.Len()}
+				}
 				batch = &replacementBatchResults{remaining: b.Len(), failAt: 1, failure: tc.writeErr, closeErr: tc.closeErr}
 				return batch
 			}}
@@ -218,7 +224,9 @@ func TestReplaceDocumentsCancellationBeforeCommit(t *testing.T) {
 		commit:   func(context.Context) error { committed = true; return nil },
 		rollback: func(context.Context) error { rolledBack = true; return nil },
 	}, send: func(_ context.Context, b *pgx.Batch) pgx.BatchResults {
-		cancel()
+		if !strings.Contains(b.QueuedQueries[0].SQL, "DELETE FROM") {
+			cancel()
+		}
 		return &replacementBatchResults{remaining: b.Len()}
 	}}
 	idx := &Index{pool: &fixturePool{tx: tx}, quoted: `"items"`, stateQuoted: `"state"`}

@@ -299,6 +299,28 @@ func TestResultsFromDocumentsLeavesUnresolvedRangesAbsent(t *testing.T) {
 	}
 }
 
+func TestResultsFromChunksReusesSourceLineOffsets(t *testing.T) {
+	t.Parallel()
+	source := "é\nfirst\nsecond\nthird"
+	chunks := []chunking.Chunk{
+		{ID: 0, Text: "é\nfirst\n", StartChar: 0, EndChar: len("é\nfirst\n")},
+		{ID: 1, Text: "second\nthird", StartChar: len("é\nfirst\n"), EndChar: len(source)},
+		{ID: 2, Text: "missing", StartChar: 0, EndChar: 0},
+	}
+	results := ResultsFromChunks(document.Document{ID: "doc", Metadata: document.Metadata{ContextStartLineKey: "99"}}, source, chunks)
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3", len(results))
+	}
+	for i, want := range [][2]int{{1, 2}, {3, 4}} {
+		if got := results[i].Metadata; got[ContextStartLineKey] != want[0] || got[ContextEndLineKey] != want[1] {
+			t.Fatalf("result[%d] line range = %v, want %v", i, got, want)
+		}
+	}
+	if _, ok := results[2].Metadata[ContextStartLineKey]; ok {
+		t.Fatalf("unresolved chunk has line metadata: %v", results[2].Metadata)
+	}
+}
+
 func TestResultsFromDocumentsRejectsInvalidIDs(t *testing.T) {
 	t.Parallel()
 	if _, err := ResultsFromDocuments([]document.Document{{ID: " ", Text: "content"}}, chunking.SmartBoundary, 80, 0); !errors.Is(err, ErrInvalidDocumentID) {

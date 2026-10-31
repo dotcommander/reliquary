@@ -288,6 +288,32 @@ func (m *multiStubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]f
 	return out, nil
 }
 
+func TestFromLibChunksRuneProjectionMatchesStandalone(t *testing.T) {
+	t.Parallel()
+	source := "é🚀\xff\nend"
+	in := []chunking.Chunk{
+		{ID: 1, StartChar: 0, EndChar: 2, Text: "é"},
+		{ID: 2, StartChar: 3, EndChar: 6, Text: "interior"},
+		{ID: 3, StartChar: 6, EndChar: len(source), Text: "tail"},
+		{ID: 4, StartChar: -1, EndChar: len(source), Text: "unknown"},
+		{ID: 5, StartChar: len(source) + 1, EndChar: len(source) + 2, Text: "out of range"},
+	}
+	got := FromLibChunks(source, in)
+	if len(got) != len(in) {
+		t.Fatalf("projected %d chunks, want %d", len(got), len(in))
+	}
+	for i, c := range in {
+		wantStart, wantEnd := chunking.RuneSpan(source, c.StartChar, c.EndChar)
+		if got[i].ID != c.ID || got[i].Text != c.Text || got[i].StartChar != wantStart || got[i].EndChar != wantEnd {
+			t.Fatalf("chunk[%d] = %+v, want ID %d text %q runes %d-%d", i, got[i], c.ID, c.Text, wantStart, wantEnd)
+		}
+		one := FromLibChunk(source, c)
+		if one.ID != c.ID || one.Text != c.Text || one.StartChar != wantStart || one.EndChar != wantEnd {
+			t.Fatalf("single projection[%d] = %+v", i, one)
+		}
+	}
+}
+
 func TestProcessBatchRequestPerItemResults(t *testing.T) {
 	t.Parallel()
 	svc := New()

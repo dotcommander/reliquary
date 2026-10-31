@@ -126,21 +126,11 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 				return fmt.Errorf("sqlite index: delete replacement document %q: %w", replacement.DocumentID, err)
 			}
 		}
-		for _, replacement := range replacements {
-			for _, item := range replacement.Results {
-				if item == nil {
-					continue
-				}
-				var retainedDocumentID string
-				err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT document_id FROM %s WHERE id = ?`, i.table), item.ID).Scan(&retainedDocumentID)
-				switch {
-				case err == nil:
-					return fmt.Errorf("%w: %q belongs to retained document %q", indexcontract.ErrResultIDConflict, item.ID, retainedDocumentID)
-				case errors.Is(err, sql.ErrNoRows):
-				case err != nil:
-					return fmt.Errorf("sqlite index: inspect replacement result %q: %w", item.ID, err)
-				}
-			}
+		if err := i.checkRetainedReplacementIDs(ctx, tx, replacementItems); err != nil {
+			return err
+		}
+		if err := i.deleteReplacementFTS(ctx, tx, replacementItems); err != nil {
+			return err
 		}
 		if err := i.writeState(ctx, tx, space); err != nil {
 			return err
@@ -153,7 +143,7 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 				if item == nil {
 					continue
 				}
-				if err := i.upsertItem(ctx, tx, item); err != nil {
+				if err := i.writeItem(ctx, tx, item, false); err != nil {
 					return err
 				}
 			}
@@ -163,6 +153,12 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 }
 
 func (i *Index) upsertItem(ctx context.Context, tx *sql.Tx, item *retrieval.Result) error {
+	return i.writeItem(ctx, tx, item, true)
+}
+
+// Replacement removes prior FTS rows in batches before writing any items.
+// Public Upsert still removes each prior row, including when its document ID changes.
+func (i *Index) writeItem(ctx context.Context, tx *sql.Tx, item *retrieval.Result, deletePriorFTS bool) error {
 	metadata, err := json.Marshal(item.Metadata)
 	if err != nil {
 		return fmt.Errorf("sqlite index: encode metadata for %q: %w", item.ID, err)
@@ -174,8 +170,10 @@ func (i *Index) upsertItem(ctx context.Context, tx *sql.Tx, item *retrieval.Resu
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, document_id, filename, content, metadata, embedding, index_identity) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET document_id=excluded.document_id, filename=excluded.filename, content=excluded.content, metadata=excluded.metadata, embedding=excluded.embedding, index_identity=excluded.index_identity`, i.table), item.ID, item.DocumentID, item.Filename, item.Content, string(metadata), string(embedding), item.IndexIdentity); err != nil {
 		return fmt.Errorf("sqlite index: upsert %q: %w", item.ID, err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, i.ftsTable), item.ID); err != nil {
-		return fmt.Errorf("sqlite index: delete prior FTS row %q: %w", item.ID, err)
+	if deletePriorFTS {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, i.ftsTable), item.ID); err != nil {
+			return fmt.Errorf("sqlite index: delete prior FTS row %q: %w", item.ID, err)
+		}
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) VALUES (?, ?, ?)`, i.ftsTable), item.ID, item.Content, item.Filename); err != nil {
 		return fmt.Errorf("sqlite index: insert FTS row %q: %w", item.ID, err)

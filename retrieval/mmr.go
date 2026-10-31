@@ -87,7 +87,9 @@ func selectMMR[T any](items []T, k int, lambda float64, relevance func(T) float6
 	}
 	for len(remaining) > 0 && len(selected) < k {
 		// Only the newest selection can raise a remaining item's maximum.
-		if len(selected) > 0 {
+		if len(selected) > 0 && (lambda != 1 || trace) {
+			// At lambda=1 an untraced selection uses only relevance; traced
+			// selections still need the exact similarity and penalty values.
 			newest := selected[len(selected)-1]
 			for i, item := range remaining {
 				if sim := similarity(item, newest); sim > maxSimilarities[i] {

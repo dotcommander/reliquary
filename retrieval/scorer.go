@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"cmp"
+	"container/heap"
 	"math"
 	"slices"
 )
@@ -152,6 +153,49 @@ func (s *Scorer) rerank(queryEmbedding []float64, queryText string, results []*R
 	return s.scoreResults(queryEmbedding, queryText, results, trace, tieByID, true)
 }
 
+// RerankTopByID scores the entire pool before selecting a bounded score/ID
+// prefix. A non-positive or non-limiting limit retains the full ranking.
+func (s *Scorer) RerankTopByID(queryEmbedding []float64, queryText string, results []*Result, limit int) []*Result {
+	if limit <= 0 || limit >= len(results) {
+		ranked, _ := s.rerank(queryEmbedding, queryText, results, false, true)
+		return ranked
+	}
+	// Corpus-relative calibration must include candidates outside the prefix.
+	scored, _ := s.scoreResults(queryEmbedding, queryText, results, false, true, false)
+	best := make(worstFirstResults, 0, limit)
+	for _, result := range scored {
+		if len(best) < limit {
+			heap.Push(&best, result)
+		} else if compareScoreID(result, best[0]) < 0 {
+			best[0] = result
+			heap.Fix(&best, 0)
+		}
+	}
+	slices.SortFunc(best, compareScoreID)
+	return best
+}
+
+// compareScoreID matches the full ranking's float (including NaN) and ID order.
+func compareScoreID(a, b *Result) int {
+	if order := cmp.Compare(b.CombinedScore, a.CombinedScore); order != 0 {
+		return order
+	}
+	return cmp.Compare(a.ID, b.ID)
+}
+
+type worstFirstResults []*Result
+
+func (h worstFirstResults) Len() int           { return len(h) }
+func (h worstFirstResults) Less(i, j int) bool { return compareScoreID(h[i], h[j]) > 0 }
+func (h worstFirstResults) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *worstFirstResults) Push(x any)        { *h = append(*h, x.(*Result)) }
+func (h *worstFirstResults) Pop() any {
+	last := len(*h) - 1
+	item := (*h)[last]
+	*h = (*h)[:last]
+	return item
+}
+
 // ScoreBatch applies the same corpus calibration as Rerank without changing
 // the order of results. Unlike Score, its scores are corpus-relative.
 func (s *Scorer) ScoreBatch(queryEmbedding []float64, queryText string, results []*Result) []*Result {
@@ -190,12 +234,13 @@ func (s *Scorer) scoreResults(queryEmbedding []float64, queryText string, result
 	}
 
 	if sortResults {
-		slices.SortFunc(results, func(a, b *Result) int {
-			if order := cmp.Compare(b.CombinedScore, a.CombinedScore); order != 0 || !tieByID {
-				return order
-			}
-			return cmp.Compare(a.ID, b.ID)
-		})
+		if tieByID {
+			slices.SortFunc(results, compareScoreID)
+		} else {
+			slices.SortFunc(results, func(a, b *Result) int {
+				return cmp.Compare(b.CombinedScore, a.CombinedScore)
+			})
+		}
 	}
 
 	if !trace {

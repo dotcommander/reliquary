@@ -8,6 +8,29 @@ import (
 	"github.com/dotcommander/reliquary/retrieval"
 )
 
+func TestSearchLimitRetainsFullPoolCalibration(t *testing.T) {
+	t.Parallel()
+
+	items := []*retrieval.Result{
+		{ID: "b", Content: "alpha", Embedding: []float64{1, 0}},
+		{ID: "a", Content: "alpha", Embedding: []float64{1, 0}},
+		{ID: "outlier", Content: "bravo", Embedding: []float64{0, 1}},
+	}
+	query := indexcontract.IndexQuery{Text: "alpha", Vector: []float32{1, 0}}
+	full, err := Search(context.Background(), query, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query.Limit = 1
+	limited, err := Search(context.Background(), query, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(limited) != 1 || limited[0].ID != "a" || limited[0].CombinedScore != full[0].CombinedScore || limited[0].EmbeddingScore != full[0].EmbeddingScore || limited[0].KeywordScore != full[0].KeywordScore {
+		t.Fatalf("limited rank = %+v, want full-pool top %+v", limited, full[0])
+	}
+}
+
 func TestSearchScoreThenIDOrderBeforeLimit(t *testing.T) {
 	t.Parallel()
 

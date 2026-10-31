@@ -77,6 +77,10 @@ func ResultsFromDocuments(docs []document.Document, strategy chunking.Strategy, 
 // validates document IDs before composing a batch.
 func ResultsFromChunks(doc document.Document, source string, chunks []chunking.Chunk) []*Result {
 	results := make([]*Result, 0, len(chunks))
+	if len(chunks) == 0 {
+		return results
+	}
+	offsets := chunking.NewSourceOffsets(source)
 	cursor := 0
 	for _, chunk := range chunks {
 		metadata := make(map[string]any, len(doc.Metadata))
@@ -88,7 +92,7 @@ func ResultsFromChunks(doc document.Document, source string, chunks []chunking.C
 		}
 		span, ok := resolveContextChunkSpan(source, chunk, cursor)
 		if ok {
-			startLine, endLine := chunking.LineRangeForSpan(source, span)
+			startLine, endLine := offsets.LineRangeForSpan(span)
 			metadata[ContextStartLineKey] = startLine
 			metadata[ContextEndLineKey] = endLine
 			cursor = chunking.NextChunkCursor(span)

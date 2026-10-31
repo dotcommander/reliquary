@@ -280,6 +280,48 @@ func TestSemanticSnapshotOnlyCopiesMatchingScope(t *testing.T) {
 	}
 }
 
+func TestSemanticEmptyScopeSkipsEmbedding(t *testing.T) {
+	t.Parallel()
+
+	emb := &fakeEmbedder{}
+	store := newSemanticTestStore(t, emb, 0)
+	ctx := context.Background()
+	for _, key := range []Key{
+		semanticScoreKey("cold"),
+		{Tenant: "other", Schema: "s1", Primitive: PrimitiveScore, Fingerprint: "tenant"},
+		{Tenant: "t1", Schema: "other", Primitive: PrimitiveScore, Fingerprint: "schema"},
+		{Tenant: "t1", Schema: "s1", Primitive: PrimitiveChoice, Fingerprint: "primitive"},
+	} {
+		if key.Primitive == PrimitiveChoice {
+			_, hit, err := store.GetChoice(ctx, key, "alpha parallel two")
+			if err != nil || hit.Kind != HitNone {
+				t.Fatalf("empty choice scope = (%v, %v), want miss", hit, err)
+			}
+		} else {
+			_, hit, err := store.GetScore(ctx, key, "alpha parallel two")
+			if err != nil || hit.Kind != HitNone {
+				t.Fatalf("empty score scope = (%v, %v), want miss", hit, err)
+			}
+		}
+	}
+	if emb.calls != 0 {
+		t.Fatalf("empty scopes embedded %d times, want 0", emb.calls)
+	}
+	if err := store.PutScore(ctx, semanticScoreKey("seed"), "alpha parallel one", judgment.Score{Value: 7}); err != nil {
+		t.Fatal(err)
+	}
+	_, hit, err := store.GetScore(ctx, semanticScoreKey("query"), "alpha parallel two")
+	if err != nil || hit.Kind != HitSemantic || emb.calls != 2 {
+		t.Fatalf("populated scope = (%v, %v), embed calls = %d; want hit and 2 calls", hit, err, emb.calls)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	_, _, err = store.GetScore(cancelled, Key{Tenant: "cold", Schema: "s1", Primitive: PrimitiveScore, Fingerprint: "cancelled"}, "alpha parallel two")
+	if !errors.Is(err, context.Canceled) || emb.calls != 2 {
+		t.Fatalf("cancelled empty scope error = %v, embed calls = %d", err, emb.calls)
+	}
+}
+
 func TestSemanticEmptyInputNeverEmbeds(t *testing.T) {
 	t.Parallel()
 
@@ -315,8 +357,12 @@ func TestSemanticPutEmbedFailure(t *testing.T) {
 	if metrics := store.Metrics(); metrics.Insertions != 0 {
 		t.Fatalf("insertions = %d, want 0", metrics.Insertions)
 	}
+	if _, hit, err := store.GetScore(context.Background(), semanticScoreKey("fp-b"), "alpha parallel two"); err != nil || hit.Kind != HitNone {
+		t.Fatalf("empty-scope GetScore = (%v, %v), want miss without embedding", hit, err)
+	}
+	store.setEntry(semanticScoreKey("fp-a"), snapshotScore(1, []float32{1, 0, 0}), 0)
 	if _, _, err := store.GetScore(context.Background(), semanticScoreKey("fp-b"), "alpha parallel two"); err == nil {
-		t.Fatal("GetScore error = nil when semantic lookup must embed")
+		t.Fatal("GetScore error = nil when populated semantic lookup must embed")
 	}
 }
 

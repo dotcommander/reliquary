@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.17.0 (2026-10-31)
+
+### Added
+
+- Add opt-in fixed ingestion chunking policies through `WithChunking`, including
+  semantic chunking, custom separators, token ceilings, and preflight budgets.
+- Add context formatting templates, citation numbering, caller-owned content
+  transforms, and emission/omission summaries.
+- Add caller-opt-in bounded PostgreSQL lexical candidate retrieval.
+
+### Changed
+
+- Reduce redundant scoring, sorting, copying, and source-offset scans while
+  retaining full-pool score calibration and deterministic index ordering.
+- Batch PostgreSQL maintenance and SQLite replacement FTS cleanup; preserve
+  replacement atomicity, retained-ID checks, and orphan FTS cleanup.
+- Track in-memory document membership for targeted replacement and deletion.
+- Restrict semantic judgment snapshots to live matching scopes and skip query
+  embedding when no live scoped candidate exists.
+- Skip unused similarity calculations for non-explained relevance-only MMR.
+
+### Compatibility
+
+- Existing default ingestion policies and caller-owned resource boundaries remain
+  unchanged. Opting into a different chunking policy requires a new index identity
+  and a fresh index or reset/re-ingestion. Candidate budgets remain caller-opt-in
+  and can affect recall. Performance gains have not been benchmarked.
+
 ## v0.16.1 (2026-10-14)
 
 ### Fixed

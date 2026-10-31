@@ -84,3 +84,70 @@ func TestReplaceDocumentsRetainsOwnedResultsAndClonesIncoming(t *testing.T) {
 		t.Fatal("failed replacement changed stored results")
 	}
 }
+
+func TestDocumentMembershipTracksUpsertsReplacementsAndDeletes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	idx := New()
+	result := func(id, doc string) *retrieval.Result {
+		return &retrieval.Result{ID: id, DocumentID: doc, IndexIdentity: "space", Embedding: []float64{1}}
+	}
+	if err := idx.Upsert(ctx, []*retrieval.Result{result("move", "first"), result("keep", "first")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Upsert(ctx, []*retrieval.Result{result("move", "second")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.ReplaceDocuments(ctx, []indexcontract.DocumentReplacement{{DocumentID: "first", Results: []*retrieval.Result{result("new", "first")}}}); err != nil {
+		t.Fatal(err)
+	}
+	if idx.items["move"] == nil || idx.items["keep"] != nil || idx.items["new"] == nil {
+		t.Fatalf("replacement removed moved ID or retained old revision: %v", idx.items)
+	}
+	if err := idx.DeleteDocument(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if idx.items["move"] != nil || idx.items["new"] == nil {
+		t.Fatalf("delete did not target moved document: %v", idx.items)
+	}
+	if err := idx.ReplaceDocuments(ctx, []indexcontract.DocumentReplacement{{DocumentID: "first"}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(idx.items) != 0 || len(idx.documents) != 0 {
+		t.Fatalf("empty replacement left results or membership: %v %v", idx.items, idx.documents)
+	}
+	if err := idx.Reset(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Upsert(ctx, []*retrieval.Result{result("move", "third")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.DeleteDocument(ctx, "third"); err != nil || len(idx.items) != 0 || len(idx.documents) != 0 {
+		t.Fatalf("reset failed to clear membership: %v %v %v", err, idx.items, idx.documents)
+	}
+}
+
+func TestReplaceDocumentsFailureKeepsDocumentMembership(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	idx := New()
+	item := &retrieval.Result{ID: "retained", DocumentID: "keep", IndexIdentity: "space", Embedding: []float64{1}}
+	if err := idx.Upsert(ctx, []*retrieval.Result{item}); err != nil {
+		t.Fatal(err)
+	}
+	conflict := &retrieval.Result{ID: "retained", DocumentID: "replace", IndexIdentity: "space", Embedding: []float64{1}}
+	if err := idx.ReplaceDocuments(ctx, []indexcontract.DocumentReplacement{{DocumentID: "replace", Results: []*retrieval.Result{conflict}}}); !errors.Is(err, indexcontract.ErrResultIDConflict) {
+		t.Fatalf("expected retained ID conflict: %v", err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := idx.ReplaceDocuments(canceled, []indexcontract.DocumentReplacement{{DocumentID: "keep"}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected canceled replacement: %v", err)
+	}
+	if err := idx.DeleteDocument(ctx, "replace"); err != nil {
+		t.Fatal(err)
+	}
+	if idx.items["retained"] == nil || len(idx.documents["keep"]) != 1 {
+		t.Fatalf("failed replacement changed retained membership: %v %v", idx.items, idx.documents)
+	}
+}

@@ -50,6 +50,22 @@ func (s *SemanticStore) removeScoped(item *ttlcache.Item[Key, semanticEntry]) {
 	}
 }
 
+// hasScopedCandidate cheaply checks for a live candidate before paid embedding.
+// It shares the snapshot's lock order and does not hold locks across Embed.
+// A later snapshot is still needed: the scope can change while embedding.
+func (s *SemanticStore) hasScopedCandidate(key Key) bool {
+	s.setMu.Lock()
+	defer s.setMu.Unlock()
+	s.scopedMu.RLock()
+	defer s.scopedMu.RUnlock()
+	for candidate := range s.scoped[scopeOf(key)] {
+		if s.cache.Has(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
 // scopeSnapshot copies matching live candidates without touching TTL or LRU.
 // Has excludes evicted entries even while their asynchronous cleanup is pending.
 // Holding setMu prevents a key from being reinserted between membership checks

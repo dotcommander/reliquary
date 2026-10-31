@@ -13,13 +13,19 @@ import (
 
 // Index is an in-memory index keyed by retrieval result ID.
 type Index struct {
-	mu    sync.RWMutex
-	items map[string]*retrieval.Result
-	space indexutil.Space
+	mu        sync.RWMutex
+	items     map[string]*retrieval.Result
+	documents map[string]map[string]struct{} // document ID -> result IDs
+	space     indexutil.Space
 }
 
 // New returns an empty in-memory index.
-func New() *Index { return &Index{items: make(map[string]*retrieval.Result)} }
+func New() *Index {
+	return &Index{
+		items:     make(map[string]*retrieval.Result),
+		documents: make(map[string]map[string]struct{}),
+	}
+}
 
 // Reset destructively removes all indexed results and their identity.
 func (i *Index) Reset(ctx context.Context) error {
@@ -29,6 +35,7 @@ func (i *Index) Reset(ctx context.Context) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.items = make(map[string]*retrieval.Result)
+	i.documents = make(map[string]map[string]struct{})
 	i.space = indexutil.Space{}
 	return nil
 }
@@ -58,10 +65,24 @@ func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
 	if i.items == nil {
 		i.items = make(map[string]*retrieval.Result)
 	}
+	if i.documents == nil {
+		i.documents = make(map[string]map[string]struct{})
+	}
 	for _, item := range items {
-		if item != nil {
-			i.items[item.ID] = indexutil.Clone(item)
+		if item == nil {
+			continue
 		}
+		if old := i.items[item.ID]; old != nil {
+			delete(i.documents[old.DocumentID], item.ID)
+			if len(i.documents[old.DocumentID]) == 0 {
+				delete(i.documents, old.DocumentID)
+			}
+		}
+		i.items[item.ID] = indexutil.Clone(item)
+		if i.documents[item.DocumentID] == nil {
+			i.documents[item.DocumentID] = make(map[string]struct{})
+		}
+		i.documents[item.DocumentID][item.ID] = struct{}{}
 	}
 	i.space = nextSpace
 	return nil
@@ -91,30 +112,47 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 			return err
 		}
 	}
-	next := make(map[string]*retrieval.Result, len(i.items))
-	for id, item := range i.items {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if _, replaced := seen[item.DocumentID]; !replaced {
-			next[id] = item
-		}
-	}
+	// Stage all fallible work before mutating either map. Search takes a snapshot
+	// under the same lock, so readers see only complete revisions.
+	staged := make(map[string]*retrieval.Result)
 	for _, replacement := range replacements {
 		for _, item := range replacement.Results {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if item != nil {
-				if retained := next[item.ID]; retained != nil {
+			if item == nil {
+				continue
+			}
+			if retained := i.items[item.ID]; retained != nil {
+				if _, replaced := seen[retained.DocumentID]; !replaced {
 					return fmt.Errorf("%w: %q belongs to retained document %q", indexcontract.ErrResultIDConflict, item.ID, retained.DocumentID)
 				}
-				next[item.ID] = indexutil.Clone(item)
 			}
+			staged[item.ID] = indexutil.Clone(item)
 		}
 	}
-
-	i.items = next
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if i.items == nil {
+		i.items = make(map[string]*retrieval.Result)
+	}
+	if i.documents == nil {
+		i.documents = make(map[string]map[string]struct{})
+	}
+	for documentID := range seen {
+		for id := range i.documents[documentID] {
+			delete(i.items, id)
+		}
+		delete(i.documents, documentID)
+	}
+	for id, item := range staged {
+		i.items[id] = item
+		if i.documents[item.DocumentID] == nil {
+			i.documents[item.DocumentID] = make(map[string]struct{})
+		}
+		i.documents[item.DocumentID][id] = struct{}{}
+	}
 	i.space = nextSpace
 	return nil
 }
@@ -129,11 +167,10 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	for id, item := range i.items {
-		if item.DocumentID == documentID {
-			delete(i.items, id)
-		}
+	for id := range i.documents[documentID] {
+		delete(i.items, id)
 	}
+	delete(i.documents, documentID)
 	return nil
 }
 

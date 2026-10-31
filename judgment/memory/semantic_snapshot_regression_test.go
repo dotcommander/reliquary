@@ -96,14 +96,15 @@ func TestSemanticLookupAllowsMutationWhileEmbedding(t *testing.T) {
 		hit   Hit
 		err   error
 	}
+	store.setEntry(semanticScoreKey("seed"), snapshotScore(1, []float32{0, 1, 0}), ttlcache.DefaultTTL)
 	result := make(chan lookupResult, 1)
 	go func() { // Exits when the released embedder finishes this one lookup.
 		score, hit, err := store.GetScore(context.Background(), semanticScoreKey("query"), "query")
 		result <- lookupResult{score, hit, err}
 	}()
 	<-started
-	// This insertion must finish before releasing the embedder: no cache lock
-	// may be held across Embed, and the production lookup must snapshot afterward.
+	// A live scope candidate admits embedding, but the final snapshot must
+	// still see this insertion, without holding a cache lock across Embed.
 	store.setEntry(semanticScoreKey("inserted"), snapshotScore(77, []float32{1, 0, 0}), ttlcache.DefaultTTL)
 	close(release)
 	got := <-result

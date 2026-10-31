@@ -257,11 +257,21 @@ func (s *SemanticStore) PutNoul(ctx context.Context, key Key, rawInput string, r
 	return nil
 }
 
-// scan embeds rawInput and returns the closest entry within the key's
-// tenant, schema, and primitive scope when its cosine similarity meets
-// the threshold.
+// scan embeds rawInput only if a live candidate exists in the key's
+// tenant, schema, and primitive scope. It snapshots again after embedding
+// so concurrent replacements remain visible during the comparison.
 func (s *SemanticStore) scan(ctx context.Context, key Key, rawInput string) (semanticEntry, Hit, error) {
 	if rawInput == "" {
+		s.misses.Add(1)
+		return semanticEntry{}, Hit{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return semanticEntry{}, Hit{}, err
+	}
+	if !s.hasScopedCandidate(key) {
+		if err := ctx.Err(); err != nil {
+			return semanticEntry{}, Hit{}, err
+		}
 		s.misses.Add(1)
 		return semanticEntry{}, Hit{}, nil
 	}

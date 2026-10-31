@@ -210,10 +210,8 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 	if err != nil {
 		return err
 	}
-	for _, replacement := range replacements {
-		if _, err := tx.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = $1`, i.quoted), replacement.DocumentID); err != nil {
-			return fmt.Errorf("delete postgres replacement document %q: %w", replacement.DocumentID, err)
-		}
+	if err := i.deleteBatchedDocuments(ctx, tx, replacements); err != nil {
+		return err
 	}
 	if err := i.checkRetainedIDs(ctx, tx, replacementItems); err != nil {
 		return err

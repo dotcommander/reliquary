@@ -1,6 +1,21 @@
 # Efficiency recommendations
 
-## Current slice: six review recommendations
+## Current slice: offset mapping and bounded selection
+
+User authority: "proceed. all recs." following the source-only efficiency review. Preserve existing uncommitted changes; no new dependencies or automatic commit.
+
+- [x] Reuse source-offset work for ingestion line mapping and chunkservice rune projection.
+- [x] Select bounded index candidates after full-pool calibration without a full sort.
+- [x] Batch replacement FTS cleanup while preserving SQLite orphan recovery and rollback.
+- [x] Skip unused similarity work for non-traced relevance-only MMR.
+- [x] Resolve tokenization/cache-store hypotheses against current ownership and workload evidence.
+- [x] Run one build, focused tests, and one consolidated diff review.
+
+Verification: `GOWORK=off GOPROXY=off go build ./...` passed. Focused tests passed for root, chunking, retrieval, chunkservice, internal/indexutil, index/inmem, and adapter/sqlite. An initial retrieval test-fixture compile failure (integer in string metadata) was corrected; affected tests passed afterward. Consolidated review replaced the initial per-rune offset table with immutable sparse checkpoints to bound index memory; every-byte equivalence tests cover checkpoint boundaries, malformed UTF-8, multibyte interiors and newline-heavy inputs. SQLite checks use disposable databases and preserve orphan FTS cleanup and retained-ID rollback. Full suite, live providers/databases and performance benchmarks were not run; runtime gains remain unmeasured. All changes remain uncommitted.
+
+Hypothesis disposition: no speculative feature/cache-store API added. The built-in embedding store is in-process (mutex/map, no remote round trips); the decorator already deduplicates inputs, batches provider misses, and optionally coalesces identical requests. Remote store latency is caller-specific and unmeasured. Index and facade ranking use different calibration pools and potentially different weights; token-feature reuse needs measured tokenization cost before adding a cross-layer ownership contract. These remain measurement-dependent, not implemented optimizations.
+
+## Previous slice: six review recommendations
 
 - [x] Skip no-query document tokenization and unused unbudgeted context prefixes.
 - [x] Score non-explained RRF without a discarded hybrid sort.
