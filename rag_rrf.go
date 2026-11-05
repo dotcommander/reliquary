@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/dotcommander/reliquary/embedding"
+	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/internal/indexutil"
 	pipelinelexical "github.com/dotcommander/reliquary/pipeline/lexical"
 	"github.com/dotcommander/reliquary/retrieval"
@@ -16,9 +17,10 @@ func (a *App) searchEmbeddedRRF(ctx context.Context, query string, vector embedd
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	vectorItems, err := a.index.Search(ctx, IndexQuery{
+	vectorItems, vectorRaw, err := a.searchRRFLane(ctx, IndexQuery{
 		Identity: a.indexIdentity,
 		Vector:   slices.Clone(vector),
+		RawText:  query,
 		Limit:    cfg.candidateLimit,
 		Filter:   cloneSearchFilter(cfg.filter),
 	})
@@ -32,11 +34,20 @@ func (a *App) searchEmbeddedRRF(ctx context.Context, query string, vector embedd
 	if err != nil {
 		return nil, err
 	}
-	lexicalItems, err := a.index.Search(ctx, IndexQuery{
-		Identity: a.indexIdentity,
-		Text:     query,
-		Limit:    cfg.candidateLimit,
-		Filter:   cloneSearchFilter(cfg.filter),
+	_, owned := a.index.(indexcontract.OwnedResults)
+	if !owned {
+		// A custom index may reuse or mutate its vector payload during the
+		// lexical call. Snapshot each vector ID before entering that lane.
+		for id, item := range vectorByID {
+			vectorByID[id] = indexutil.Clone(item)
+		}
+	}
+	lexicalItems, lexicalRaw, err := a.searchRRFLane(ctx, IndexQuery{
+		Identity:  a.indexIdentity,
+		Text:      query,
+		RawVector: slices.Clone(vector),
+		Limit:     cfg.candidateLimit,
+		Filter:    cloneSearchFilter(cfg.filter),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("reliquary search lexical lane: %w", err)
@@ -74,6 +85,9 @@ func (a *App) searchEmbeddedRRF(ctx context.Context, query string, vector embedd
 		if item == nil {
 			return nil, fmt.Errorf("reliquary search RRF: missing payload for result %q", candidate.ID)
 		}
+		if !owned && vectorByID[candidate.ID] == nil {
+			item = indexutil.Clone(item)
+		}
 		rrfScores[candidate.ID] = candidate.Score * normalize
 		ranked = append(ranked, item)
 	}
@@ -81,17 +95,28 @@ func (a *App) searchEmbeddedRRF(ctx context.Context, query string, vector embedd
 	// RRF owns the order and fused score; hybrid scoring supplies diagnostics.
 	// Only explained searches need the hybrid sort and trace ranks.
 	var explanations explanationMap
-	if cfg.explain {
+	if vectorRaw != nil && lexicalRaw != nil {
+		selected := make([]indexcontract.ScoredCandidate, len(ranked))
+		for i, item := range ranked {
+			candidate, ok := vectorRaw[item.ID]
+			if !ok {
+				candidate = lexicalRaw[item.ID]
+			}
+			candidate.Result = item
+			selected[i] = candidate
+		}
+		ranked, explanations = scoreRawCandidates(a.weights, query, selected, cfg.explain, cfg.explain)
+		for _, explanation := range explanations {
+			explanation.HybridScoreUsed = false
+		}
+	} else if cfg.explain {
 		ranked, explanations = scoreCandidates(a.weights, vector, query, ranked, true, false)
-		byID := make(map[string]*retrieval.Result, len(ranked))
-		for _, item := range ranked {
-			byID[item.ID] = item
-		}
-		for i, candidate := range fused {
-			ranked[i] = byID[candidate.ID]
-		}
+		reorderToFusedOrder(ranked, fused)
 	} else {
 		retrieval.NewScorer(a.weights).ScoreBatch(retrieval.EmbeddingVector(vector), query, ranked)
+	}
+	if vectorRaw != nil && lexicalRaw != nil && cfg.explain {
+		reorderToFusedOrder(ranked, fused)
 	}
 	var vectorRanks, lexicalRanks map[string]int
 	if cfg.explain {
@@ -115,6 +140,18 @@ func (a *App) searchEmbeddedRRF(ctx context.Context, query string, vector embedd
 		}
 	}
 	return finishSearch(ctx, query, cfg, ranked, explanations)
+}
+
+// reorderToFusedOrder restores RRF fused order after a re-sort by bringing
+// the re-sorted payloads back into the fused ranking by result ID.
+func reorderToFusedOrder(ranked []*retrieval.Result, fused pipelinelexical.RankedList) {
+	byID := make(map[string]*retrieval.Result, len(ranked))
+	for _, item := range ranked {
+		byID[item.ID] = item
+	}
+	for i, candidate := range fused {
+		ranked[i] = byID[candidate.ID]
+	}
 }
 
 func rrfRanks(ranked pipelinelexical.RankedList) map[string]int {
@@ -146,7 +183,7 @@ func cloneRRFLane(source string, items []*retrieval.Result) (pipelinelexical.Ran
 		}
 		ranked = append(ranked, pipelinelexical.Candidate{ID: item.ID, Source: source})
 		if _, exists := byID[item.ID]; !exists {
-			byID[item.ID] = indexutil.Clone(item)
+			byID[item.ID] = item
 		}
 	}
 	return ranked, byID, nil

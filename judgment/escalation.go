@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/dotcommander/reliquary/internal/validate"
 )
 
 // ErrInvalidPolicy reports an escalation router constructed with a nil
@@ -128,10 +130,10 @@ type Routed[T any] struct {
 // mutable state and is safe for concurrent use; collaborators must be
 // safe for their own concurrent use.
 type Router struct {
-	reflex      Judge
-	deliberate  Judge
-	memory      Memory
-	thresholds  Thresholds
+	reflex     Judge
+	deliberate Judge
+	memory     Memory
+	thresholds Thresholds
 }
 
 // NewRouter creates a Router over the injected providers and memory.
@@ -141,13 +143,13 @@ type Router struct {
 // caller-owned; the router owns no transport, credentials, or persistent
 // state.
 func NewRouter(reflex, deliberate Judge, mem Memory, thresholds Thresholds) (*Router, error) {
-	if reflex == nil {
+	if validate.IsNil(reflex) {
 		return nil, fmt.Errorf("%w: reflex provider must not be nil", ErrInvalidPolicy)
 	}
-	if deliberate == nil {
+	if validate.IsNil(deliberate) {
 		return nil, fmt.Errorf("%w: deliberative provider must not be nil", ErrInvalidPolicy)
 	}
-	if mem == nil {
+	if validate.IsNil(mem) {
 		return nil, fmt.Errorf("%w: memory must not be nil", ErrInvalidPolicy)
 	}
 	if err := thresholds.Validate(); err != nil {

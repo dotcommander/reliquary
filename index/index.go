@@ -56,6 +56,25 @@ type Index interface {
 	Search(ctx context.Context, query IndexQuery) ([]*retrieval.Result, error)
 }
 
+// OwnedResults marks indexes whose Search results are detached from stored
+// embeddings and nested JSON metadata. Implementations must also detach
+// SearchScoredCandidates results if they support that optional capability.
+type OwnedResults interface {
+	SearchResultsOwned()
+}
+
+// ScoredCandidate pairs an owned result with its pre-calibration signals.
+type ScoredCandidate struct {
+	Result  *retrieval.Result
+	Raw     retrieval.ScoreSignals
+	Present retrieval.SignalPresence
+}
+
+// ScoredCandidateSearcher optionally exposes signals from index-side selection.
+type ScoredCandidateSearcher interface {
+	SearchScoredCandidates(ctx context.Context, query IndexQuery) ([]ScoredCandidate, error)
+}
+
 // Resetter is implemented by indexes that can destructively remove every
 // stored result. It is optional so custom Index implementations remain source
 // compatible.
@@ -79,4 +98,8 @@ type IndexQuery struct {
 	Vector   []float32
 	Limit    int
 	Filter   map[string]any
+	// RawText and RawVector optionally request the other RRF lane's signals
+	// for selected candidates without changing selection ordering.
+	RawText   string
+	RawVector []float32
 }

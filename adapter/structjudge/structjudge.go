@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/dotcommander/reliquary/internal/validate"
 	"github.com/dotcommander/reliquary/judgment"
 )
 
@@ -66,7 +67,7 @@ type Adapter struct {
 
 // New constructs an Adapter over client.
 func New(client Client) (*Adapter, error) {
-	if client == nil {
+	if validate.IsNil(client) {
 		return nil, ErrNilClient
 	}
 	return &Adapter{client: client}, nil

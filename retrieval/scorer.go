@@ -5,6 +5,8 @@ import (
 	"container/heap"
 	"math"
 	"slices"
+
+	"github.com/dotcommander/reliquary/vector"
 )
 
 // Weights configures relative importance of scoring signals.
@@ -211,6 +213,8 @@ func (s *Scorer) scoreResults(queryEmbedding []float64, queryText string, result
 	queryTokens := tokenize(queryText)
 	queryTokenCount := len(queryTokens)
 	weights, adaptiveWeights := s.effectiveWeights(queryTokenCount)
+	// One norm pass for the query; each candidate prepares its own norm once.
+	queryPrepared := vectors.Prepare64(queryEmbedding)
 
 	channels := scoreChannels{}
 	presenceByResult := make(map[*Result]SignalPresence, len(results))
@@ -220,7 +224,7 @@ func (s *Scorer) scoreResults(queryEmbedding []float64, queryText string, result
 	}
 
 	for _, result := range results {
-		rawSignals, signalPresence := computeAndStoreRawSignals(queryEmbedding, queryTokens, result, &channels)
+		rawSignals, signalPresence := computeAndStoreRawSignals(queryEmbedding, queryPrepared, queryTokens, result, &channels)
 		presenceByResult[result] = signalPresence
 		if trace {
 			tracesByResult[result] = scoreTraceState{raw: rawSignals, present: signalPresence}
@@ -271,7 +275,7 @@ func (s *Scorer) scoreResults(queryEmbedding []float64, queryText string, result
 // The returned CombinedScore must NOT be compared against scores produced by
 // Rerank, which applies corpus-relative min-max calibration before scoring.
 func (s *Scorer) Score(queryEmbedding []float64, queryText string, result *Result) float64 {
-	computeAndStoreRawSignals(queryEmbedding, tokenize(queryText), result, nil)
+	computeAndStoreRawSignals(queryEmbedding, vectors.Prepare64(queryEmbedding), tokenize(queryText), result, nil)
 	result.CombinedScore = weightedScore(s.weights, resultScoreSignals(result))
 	return result.CombinedScore
 }

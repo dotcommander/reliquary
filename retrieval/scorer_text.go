@@ -26,6 +26,27 @@ func overlapRatio(tokens, reference []string) float64 {
 	return float64(matches) / float64(len(tokens))
 }
 
+// overlapRatioScan returns the same ratio as overlapRatio without building a
+// reference set: each probed token gets a linear membership scan of the
+// reference. Prefer it when the reference side is much larger than the probe
+// side (keyword scoring: a handful of query tokens against every candidate's
+// content tokens), where the hash-set build dominated per-candidate cost.
+func overlapRatioScan(tokens, reference []string) float64 {
+	if len(tokens) == 0 || len(reference) == 0 {
+		return 0
+	}
+	matches := 0
+	for _, token := range tokens {
+		for _, candidate := range reference {
+			if token == candidate {
+				matches++
+				break
+			}
+		}
+	}
+	return float64(matches) / float64(len(tokens))
+}
+
 func tokenize(text string) []string {
 	text = strings.ToLower(text)
 	tokens := strings.FieldsFunc(text, func(r rune) bool {

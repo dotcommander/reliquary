@@ -176,6 +176,14 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 
 // Search scans the in-memory entries and returns scored candidates.
 func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
+	items, err := i.searchItems(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return indexutil.Search(ctx, query, items)
+}
+
+func (i *Index) searchItems(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -196,5 +204,5 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 	if err := space.ValidateQuery(query); err != nil {
 		return nil, err
 	}
-	return indexutil.Search(ctx, query, items)
+	return items, nil
 }

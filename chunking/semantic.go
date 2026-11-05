@@ -122,8 +122,8 @@ func NewSemanticChunker(embedder BatchEmbedder, opts SemanticOpts) (*SemanticChu
 // embeddings. It returns false when the supplied data is not suitable for
 // semantic planning; callers should then use their preferred fallback chunker.
 func PlanSemanticChunks(text string, units []SemanticUnit, embeddings [][]float32, opts SemanticPlanOptions) (SemanticPlan, bool) {
-	maxLimit := opts.MaxChunkChars
 	opts = opts.withDefaults()
+	maxLimit := opts.MaxChunkChars
 	spans, unitTexts := semanticUnitsFromPublic(units, text)
 
 	if len(spans) < 3 {

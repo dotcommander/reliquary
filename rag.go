@@ -10,6 +10,7 @@ import (
 
 	"github.com/dotcommander/reliquary/document"
 	"github.com/dotcommander/reliquary/embedding"
+	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/internal/indexutil"
 	"github.com/dotcommander/reliquary/internal/validate"
 	"github.com/dotcommander/reliquary/retrieval"
@@ -124,6 +125,9 @@ func (a *App) searchQueries(ctx context.Context, queries []string, opts []Search
 		return a.searchConcurrent(ctx, nonblank, positions, embedded.Vectors, cfg, rows)
 	}
 	for i, query := range nonblank {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		row, err := a.searchEmbedded(ctx, query, embedded.Vectors[i], cfg)
 		if err != nil {
 			return nil, err
@@ -147,27 +151,48 @@ func (a *App) searchEmbedded(ctx context.Context, query string, vector embedding
 	if cfg.rrf {
 		return a.searchEmbeddedRRF(ctx, query, vector, cfg)
 	}
-	items, err := a.index.Search(ctx, IndexQuery{
+	request := IndexQuery{
 		Identity: a.indexIdentity,
 		Text:     query,
 		Vector:   slices.Clone(vector),
 		Limit:    cfg.candidateLimit,
 		Filter:   cloneSearchFilter(cfg.filter),
-	})
+	}
+	if searcher, ok := a.index.(indexcontract.ScoredCandidateSearcher); ok {
+		candidates, err := searcher.SearchScoredCandidates(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(candidates) == 0 {
+			return nil, nil
+		}
+		ranked, explanations := scoreRawCandidates(a.weights, query, candidates, cfg.explain, true)
+		return finishSearch(ctx, query, cfg, ranked, explanations)
+	}
+	items, err := a.index.Search(ctx, request)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(items) == 0 {
 		return nil, nil
 	}
-	// Rerank scores results in place; clone each result so searches never mutate
-	// stored state and remain safe regardless of how the Index returns items.
+	// Unknown indexes may return stored payloads; built-in indexes detach them.
+	_, owned := a.index.(indexcontract.OwnedResults)
 	scored := make([]*retrieval.Result, 0, len(items))
 	for _, item := range items {
 		if item == nil {
 			continue
 		}
-		scored = append(scored, indexutil.Clone(item))
+		if !owned {
+			item = indexutil.Clone(item)
+		}
+		scored = append(scored, item)
 	}
 	if len(scored) == 0 {
 		return nil, nil
@@ -196,6 +221,9 @@ func scoreCandidates(weights retrieval.Weights, vector embedding.Vector, query s
 }
 
 func finishSearch(ctx context.Context, query string, cfg searchConfig, ranked []*retrieval.Result, explanations explanationMap) ([]*retrieval.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if cfg.reranker != nil {
 		if err := applyReranker(ctx, query, cfg.reranker, ranked, explanations); err != nil {
 			return nil, err
@@ -212,18 +240,31 @@ func finishSearch(ctx context.Context, query string, cfg searchConfig, ranked []
 		k = len(ranked)
 	}
 	if cfg.mmr {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !cfg.explain {
-			return retrieval.Diversify(ranked, k, cfg.lambda), nil
+			diversified := retrieval.Diversify(ranked, k, cfg.lambda)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return diversified, nil
 		}
 		final, traces := retrieval.DiversifyWithTrace(ranked, k, cfg.lambda)
 		for i, result := range final {
 			explanations[result].MMR = &traces[i]
 		}
 		attachExplanations(final, explanations)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		return final, nil
 	}
 	final := ranked[:k]
 	attachExplanations(final, explanations)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	return final, nil
 }
 

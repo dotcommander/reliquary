@@ -34,3 +34,41 @@ func TestScorerPreparedQueryPreservesTokenSemantics(t *testing.T) {
 		}
 	}
 }
+
+func TestOverlapRatioScanMatchesMapImplementation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		tokens    []string
+		reference []string
+	}{
+		{"empty probe", nil, []string{"alpha"}},
+		{"empty reference", []string{"alpha"}, nil},
+		{"both empty", nil, nil},
+		{"no matches", []string{"alpha", "beta"}, []string{"gamma", "delta"}},
+		{"all matches", []string{"alpha", "beta"}, []string{"beta", "alpha"}},
+		{"duplicate probes counted", []string{"alpha", "alpha", "beta"}, []string{"alpha"}},
+		{"duplicate reference harmless", []string{"alpha"}, []string{"alpha", "alpha", "alpha"}},
+		{"large reference", []string{"alpha", "zulu"}, makeTokens("x", 64)[:63]},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got, want := overlapRatioScan(tc.tokens, tc.reference), overlapRatio(tc.tokens, tc.reference); got != want {
+				t.Fatalf("overlapRatioScan = %v, want overlapRatio %v", got, want)
+			}
+		})
+	}
+}
+
+func makeTokens(prefix string, n int) []string {
+	tokens := make([]string, n)
+	for i := range tokens {
+		if i == 0 {
+			tokens[i] = "alpha"
+		} else {
+			tokens[i] = prefix + string(rune('a'+i%26)) + string(rune('0'+i%10))
+		}
+	}
+	return tokens
+}

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/dotcommander/reliquary/internal/validate"
 	"github.com/dotcommander/reliquary/judgment"
 )
 
@@ -94,7 +95,7 @@ var (
 // New constructs the adapter over an injected Jev client. It performs no
 // network, file, or environment I/O and stores nothing beyond the client.
 func New(client Client) (*Adapter, error) {
-	if client == nil {
+	if validate.IsNil(client) {
 		return nil, ErrNilClient
 	}
 	return &Adapter{client: client}, nil

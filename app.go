@@ -33,6 +33,12 @@ var ErrNilApp = errors.New("reliquary: nil app")
 // ErrInvalidIndexIdentity is returned when WithIndexIdentity is empty.
 var ErrInvalidIndexIdentity = errors.New("reliquary: index identity must not be empty")
 
+// ErrInvalidChunkSize is returned when WithChunker receives a nonpositive size.
+var ErrInvalidChunkSize = errors.New("reliquary: chunk size must be greater than 0")
+
+// ErrInvalidChunkOverlap is returned when WithChunker receives an invalid overlap.
+var ErrInvalidChunkOverlap = errors.New("reliquary: chunk overlap must be between 0 and chunk size")
+
 // ErrResetUnsupported reports an Index without the optional reset contract.
 var ErrResetUnsupported = errors.New("reliquary: index does not support reset")
 
@@ -89,6 +95,14 @@ func New(opts ...Option) (*App, error) {
 	}
 	if !a.indexIdentitySet || strings.TrimSpace(a.indexIdentity) == "" {
 		return nil, ErrInvalidIndexIdentity
+	}
+	if a.chunkerSet {
+		if a.size <= 0 {
+			return nil, ErrInvalidChunkSize
+		}
+		if a.overlap < 0 || a.overlap >= a.size {
+			return nil, ErrInvalidChunkOverlap
+		}
 	}
 	if err := a.configureChunking(); err != nil {
 		return nil, err

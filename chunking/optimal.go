@@ -98,6 +98,9 @@ func (c *OptimalChunker) SplitIntoChunks(text string) []string {
 // runes, tracking byte offsets into the original text. Break points (\n\n, ". ")
 // are searched in byte space but the window is measured in rune count.
 func (c *OptimalChunker) splitIntoSpans(text string) []textSpan {
+	if c.OptimalLength <= 0 {
+		return nil
+	}
 	if utf8.RuneCountInString(text) <= c.OptimalLength {
 		return []textSpan{{text: text, start: 0, end: len(text)}}
 	}

@@ -37,7 +37,7 @@ func usesDefaultTextWeights(weights Weights) bool {
 		weights.Filename == defaults.Filename
 }
 
-func computeAndStoreRawSignals(queryEmbedding []float64, queryTokens []string, result *Result, channels *scoreChannels) (ScoreSignals, SignalPresence) {
+func computeAndStoreRawSignals(queryEmbedding []float64, queryPrepared vectors.Prepared64, queryTokens []string, result *Result, channels *scoreChannels) (ScoreSignals, SignalPresence) {
 	var raw ScoreSignals
 	var present SignalPresence
 	result.EmbeddingScore = 0
@@ -52,7 +52,7 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryTokens []string, r
 	hasEmbedding := len(queryEmbedding) > 0
 
 	if hasEmbedding && len(result.Embedding) > 0 {
-		result.EmbeddingScore = vectors.Cosine64(queryEmbedding, result.Embedding)
+		result.EmbeddingScore = vectors.Cosine64Prepared(queryEmbedding, queryPrepared, result.Embedding, vectors.Prepare64(result.Embedding))
 		raw.Embedding = result.EmbeddingScore
 		present.Embedding = true
 		if channels != nil {
@@ -60,7 +60,7 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryTokens []string, r
 		}
 	}
 	if len(queryTokens) > 0 && len(contentTokens) > 0 {
-		result.KeywordScore = overlapRatio(queryTokens, contentTokens)
+		result.KeywordScore = overlapRatioScan(queryTokens, contentTokens)
 		raw.Keyword = result.KeywordScore
 		present.Keyword = true
 		if channels != nil {
@@ -68,7 +68,7 @@ func computeAndStoreRawSignals(queryEmbedding []float64, queryTokens []string, r
 		}
 	}
 	if len(queryTokens) > 0 && len(filenameTokens) > 0 {
-		result.FilenameScore = overlapRatio(filenameTokens, queryTokens)
+		result.FilenameScore = overlapRatioScan(filenameTokens, queryTokens)
 		raw.Filename = result.FilenameScore
 		present.Filename = true
 		if channels != nil {

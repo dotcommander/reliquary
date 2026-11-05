@@ -216,6 +216,14 @@ func (i *Index) Reset(ctx context.Context) error {
 }
 
 func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
+	items, err := i.searchItems(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return indexutil.Search(ctx, query, items)
+}
+
+func (i *Index) searchItems(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -228,7 +236,10 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 		candidates, err = i.searchSnapshot(ctx, tx, query)
 		return err
 	})
-	return candidates, err
+	if err != nil {
+		return nil, err
+	}
+	return candidates, nil
 }
 
 func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
@@ -284,11 +295,11 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 		if err := decoder.Decode(&item.Metadata); err != nil {
 			return nil, err
 		}
-		if err := json.Unmarshal([]byte(embedding), &item.Embedding); err != nil {
-			return nil, err
-		}
 		if !indexutil.MatchesFilter(&item, query.Filter) {
 			continue
+		}
+		if err := json.Unmarshal([]byte(embedding), &item.Embedding); err != nil {
+			return nil, err
 		}
 		candidates = append(candidates, &item)
 		if limit > 0 && len(candidates) == limit {
@@ -298,7 +309,7 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return indexutil.Search(ctx, query, candidates)
+	return candidates, nil
 }
 
 // plainTextFTSQuery treats caller text as terms, not as FTS5 query syntax.

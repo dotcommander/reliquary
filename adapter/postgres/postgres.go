@@ -278,6 +278,14 @@ func (i *Index) Reset(ctx context.Context) error {
 // retrieval bounds rows but can miss winners under Go's different ranking.
 // Vector and hybrid queries retain their existing SQL candidate bound.
 func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
+	items, err := i.searchItems(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	return indexutil.Search(ctx, query, items)
+}
+
+func (i *Index) searchItems(ctx context.Context, query indexcontract.IndexQuery) ([]*retrieval.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -341,7 +349,7 @@ func (i *Index) Search(ctx context.Context, query indexcontract.IndexQuery) ([]*
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit postgres index search: %w", err)
 	}
-	return indexutil.Search(ctx, query, items)
+	return items, nil
 }
 
 type rowQueryer interface {

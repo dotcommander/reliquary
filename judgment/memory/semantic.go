@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/dotcommander/reliquary/embedding"
+	"github.com/dotcommander/reliquary/internal/validate"
 	"github.com/dotcommander/reliquary/judgment"
 	"github.com/jellydator/ttlcache/v3"
 )
@@ -92,7 +93,7 @@ type SemanticMetrics struct {
 // goroutine, which exits when Close is called. Cache behavior (TTL,
 // capacity, touch-on-hit) reuses the Store options; TTL must be positive.
 func NewSemantic(cfg SemanticConfig, opts ...Option) (*SemanticStore, error) {
-	if cfg.Embedder == nil {
+	if validate.IsNil(cfg.Embedder) {
 		return nil, fmt.Errorf("judgment/memory: SemanticConfig.Embedder is required")
 	}
 	if cfg.Model.Dim <= 0 {

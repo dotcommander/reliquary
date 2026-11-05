@@ -183,39 +183,38 @@ func TestDiversifyWithTraceEdgeCases(t *testing.T) {
 func TestMMRLambdaOneSkipsOnlyUntracedSimilarities(t *testing.T) {
 	t.Parallel()
 
+	// All items share one embedding, so every traced similarity is exactly 1.
+	// Similarity work lives inside selectMMR since the prepared-norm refactor,
+	// so the lambda=1 untraced skip is structural rather than countable; this
+	// test still pins its observable contract: relevance-only ordering with
+	// stable ties, traced/untraced agreement, and traced similarity values.
+	shared := []float64{1, 0}
 	items := []MMRItem{
-		{ID: "nan", Score: math.NaN()},
-		{ID: "negative", Score: math.Inf(-1)},
-		{ID: "tie-b", Score: 2},
-		{ID: "tie-a", Score: 2},
-		{ID: "positive", Score: math.Inf(1)},
+		{ID: "nan", Score: math.NaN(), Embedding: shared},
+		{ID: "negative", Score: math.Inf(-1), Embedding: shared},
+		{ID: "tie-b", Score: 2, Embedding: shared},
+		{ID: "tie-a", Score: 2, Embedding: shared},
+		{ID: "positive", Score: math.Inf(1), Embedding: shared},
 	}
-	calls := 0
-	similarity := func(_, _ MMRItem) float64 {
-		calls++
-		return 0.75
-	}
+	embeddingOf := func(item MMRItem) []float64 { return item.Embedding }
 	relevance := func(item MMRItem) float64 { return item.Score }
-	got, _ := selectMMR(items, len(items), 1, relevance, similarity, false)
-	if calls != 0 {
-		t.Fatalf("untraced lambda=1 computed %d unused similarities", calls)
-	}
+	got, _ := selectMMR(items, len(items), 1, relevance, embeddingOf, false)
 	want := []string{"positive", "tie-b", "tie-a", "negative", "nan"}
 	for i, id := range want {
 		if got[i].ID != id {
 			t.Fatalf("rank %d = %q, want %q", i, got[i].ID, id)
 		}
 	}
-	traced, traces := selectMMR(items, len(items), 1, relevance, similarity, true)
-	if calls == 0 || len(traces) != len(items) {
-		t.Fatalf("traced selection computed %d similarities and %d traces", calls, len(traces))
+	traced, traces := selectMMR(items, len(items), 1, relevance, embeddingOf, true)
+	if len(traces) != len(items) {
+		t.Fatalf("traced selection produced %d traces, want %d", len(traces), len(items))
 	}
 	for i := range traced {
 		if traced[i].ID != got[i].ID {
 			t.Fatalf("traced rank %d = %q, untraced %q", i, traced[i].ID, got[i].ID)
 		}
 	}
-	if traces[1].MaxSimilarity != 0.75 || traces[1].Penalty != 0 {
+	if traces[1].MaxSimilarity != 1 || traces[1].Penalty != 0 {
 		t.Fatalf("traced lambda=1 similarity/penalty = %+v", traces[1])
 	}
 }
