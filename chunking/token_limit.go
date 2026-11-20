@@ -2,6 +2,8 @@ package chunking
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -75,7 +77,10 @@ func refineExactTokenLimits(chunks []Chunk, tokenizer Tokenizer, maxTokens int) 
 			return nil, fmt.Errorf("split chunk %d: %w", chunk.ID, err)
 		}
 		for _, part := range parts {
-			result = append(result, buildChunk(len(result), part))
+			sub := buildChunk(len(result), part)
+			sub.Metadata = maps.Clone(chunk.Metadata)
+			sub.Path = slices.Clone(chunk.Path)
+			result = append(result, sub)
 		}
 	}
 	return result, nil
@@ -146,7 +151,10 @@ func EnforceTokenLimits(chunks []Chunk, tc TokenCounter) []Chunk {
 			if sub == "" {
 				continue
 			}
-			result = append(result, buildChunk(id, sub))
+			sc := buildChunk(id, sub)
+			sc.Metadata = maps.Clone(c.Metadata)
+			sc.Path = slices.Clone(c.Path)
+			result = append(result, sc)
 			id++
 		}
 	}

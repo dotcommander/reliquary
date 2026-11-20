@@ -46,10 +46,14 @@ func (h *headingAwareChunker) Chunk(text string, size int, overlap int) []Chunk 
 		}
 
 		if utf8.RuneCountInString(trimmed) <= size {
-			startChar, endChar, _ := Locate(text, trimmed, cursor)
-			cursor = endChar
+			startChar, endChar, ok := Locate(text, trimmed, cursor)
+			if ok {
+				cursor = endChar
+			} else {
+				startChar, endChar = 0, 0
+			}
 			prevLen := len(chunks)
-			chunks = appendChunkIfValid(chunks, id, trimmed, "", startChar, endChar)
+			chunks = appendChunkIfValid(chunks, id, trimmed, text, startChar, endChar)
 			if len(chunks) > prevLen {
 				chunks[len(chunks)-1].Path = r.path
 				id++
@@ -57,9 +61,18 @@ func (h *headingAwareChunker) Chunk(text string, size int, overlap int) []Chunk 
 			continue
 		}
 
-		sectionStart, _, _ := Locate(text, trimmed, cursor)
+		sectionStart, sectionEnd, ok := Locate(text, trimmed, cursor)
+		if ok {
+			cursor = sectionEnd
+		}
 		sub := h.sentenceFallback.Chunk(trimmed, size, overlap)
-		sub = adjustChunkSpans(sub, sectionStart)
+		if ok && sectionStart >= 0 && sectionEnd <= len(text) && text[sectionStart:sectionEnd] == trimmed {
+			sub = adjustChunkSpans(sub, sectionStart)
+		} else {
+			for i := range sub {
+				sub[i].StartChar, sub[i].EndChar = 0, 0
+			}
+		}
 		for _, sc := range sub {
 			sc.ID = id
 			sc.Path = r.path

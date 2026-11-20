@@ -262,3 +262,25 @@ func TestSinkSharesMemoryIndexWithApp(t *testing.T) {
 		t.Fatalf("results = %#v, want shared result in %q", results, identity)
 	}
 }
+
+func TestSinkWrite_CanceledContextOnEmptyBatch(t *testing.T) {
+	t.Parallel()
+	fi := &fakeIndex{}
+	sink, err := NewSink(fi, Config{IndexIdentity: "test-space"})
+	if err != nil {
+		t.Fatalf("NewSink: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = sink.Write(ctx, ingest.Batch[*retrieval.Result]{
+		Records: []ingest.Record[*retrieval.Result]{{ID: "a", Payload: nil}},
+		Cursor:  ingest.Cursor{Source: "s3"},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Write(canceled, empty items) error = %v, want context.Canceled", err)
+	}
+	if len(fi.upserts) != 0 {
+		t.Fatalf("Upsert called %d times, want 0", len(fi.upserts))
+	}
+}

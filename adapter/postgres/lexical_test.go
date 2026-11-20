@@ -47,6 +47,7 @@ func TestLexicalCandidateQueryShape(t *testing.T) {
 		{name: "hybrid", text: "quartz beacon", vector: []float32{1, 0}, limit: 1},
 		{name: "vector", vector: []float32{1, 0}, limit: 1},
 		{name: "empty text", limit: 1},
+		{name: "whitespace-only text", text: "   \t\n  ", limit: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -61,21 +62,24 @@ func TestLexicalCandidateQueryShape(t *testing.T) {
 				t.Fatalf("unexpected lexical SQL: %s", statement)
 			}
 			if !tc.lexical {
-				if len(tc.vector) > 0 && !strings.Contains(statement, `embedding <=> $3 NULLS LAST, id ASC LIMIT $4`) {
+				if len(tc.vector) > 0 && !strings.Contains(statement, `embedding <=> $4 NULLS LAST, id ASC LIMIT $5`) {
 					t.Fatalf("vector order changed: %s", statement)
+				}
+				if len(tc.vector) == 0 && !strings.Contains(statement, `ORDER BY id ASC`) {
+					t.Fatalf("fallback order missing: %s", statement)
 				}
 				return
 			}
 			for _, want := range []string{
-				`document_id = $1`, `metadata @> $2::jsonb`,
-				`to_tsvector($3::regconfig, filename || ' ' || content) @@ plainto_tsquery($3::regconfig, $4)`,
-				`ORDER BY ts_rank_cd(to_tsvector($3::regconfig, filename || ' ' || content), plainto_tsquery($3::regconfig, $4)) DESC, id ASC LIMIT $5`,
+				`document_id = $1`, `metadata @> $2::jsonb AND jsonb_typeof(metadata -> $3) = 'string'`,
+				`to_tsvector($4::regconfig, filename || ' ' || content) @@ plainto_tsquery($4::regconfig, $5)`,
+				`ORDER BY ts_rank_cd(to_tsvector($4::regconfig, filename || ' ' || content), plainto_tsquery($4::regconfig, $5)) DESC, id ASC LIMIT $6`,
 			} {
 				if !strings.Contains(statement, want) {
 					t.Errorf("query %q missing %q", statement, want)
 				}
 			}
-			if len(args) != 5 || args[0] != "doc" || args[2] != "english" || args[3] != tc.text || args[4] != tc.wantCap {
+			if len(args) != 6 || args[0] != "doc" || args[2] != "tenant" || args[3] != "english" || args[4] != tc.text || args[5] != tc.wantCap {
 				t.Fatalf("args = %#v", args)
 			}
 			if strings.Contains(statement, "english") || strings.Contains(statement, "quartz beacon") {

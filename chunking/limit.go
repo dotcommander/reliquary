@@ -2,6 +2,7 @@ package chunking
 
 import (
 	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -47,7 +48,7 @@ func EnforceHardLimits(chunks []Chunk, opts LimitOptions) []Chunk {
 		// Oversized — split it, retaining the originating block classification.
 		firstSub := len(result)
 		subs := splitOversizedChunk(c.Text, opts.MaxChars)
-		if opts.OriginalText != "" && (c.StartChar != 0 || c.EndChar != 0) {
+		if opts.OriginalText != "" && c.StartChar >= 0 && c.StartChar < c.EndChar && c.EndChar <= len(opts.OriginalText) {
 			// Propagate sub-spans by locating each sub-text within the
 			// chunk's original byte range.
 			origin := opts.OriginalText[c.StartChar:c.EndChar]
@@ -80,6 +81,7 @@ func EnforceHardLimits(chunks []Chunk, opts LimitOptions) []Chunk {
 		}
 		for i := firstSub; i < len(result); i++ {
 			result[i].Metadata = maps.Clone(c.Metadata)
+			result[i].Path = slices.Clone(c.Path)
 		}
 	}
 

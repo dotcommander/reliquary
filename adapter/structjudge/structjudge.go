@@ -25,6 +25,7 @@
 package structjudge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -117,22 +118,24 @@ var noulSchema = []byte(`{
 	"required": ["verdict", "confidence"]
 }`)
 
+type wireOptionProbability struct {
+	Option      *string  `json:"option"`
+	Probability *float64 `json:"probability"`
+}
+
 type wireChoice struct {
-	Selected     string `json:"selected"`
-	Distribution []struct {
-		Option      string  `json:"option"`
-		Probability float64 `json:"probability"`
-	} `json:"distribution"`
+	Selected     *string                  `json:"selected"`
+	Distribution *[]wireOptionProbability `json:"distribution"`
 }
 
 type wireScore struct {
-	Value      float64 `json:"value"`
-	Confidence float64 `json:"confidence"`
+	Value      *float64 `json:"value"`
+	Confidence *float64 `json:"confidence"`
 }
 
 type wireNoul struct {
-	Verdict    string  `json:"verdict"`
-	Confidence float64 `json:"confidence"`
+	Verdict    *string  `json:"verdict"`
+	Confidence *float64 `json:"confidence"`
 }
 
 // Choose renders the choice request into one instruction, generates a
@@ -145,12 +148,24 @@ func (a *Adapter) Choose(ctx context.Context, request judgment.ChoiceRequest) (j
 	if err := a.generate(ctx, choiceInstruction(request), choiceSchema, &payload); err != nil {
 		return judgment.Choice{}, err
 	}
-	result := judgment.Choice{Selected: payload.Selected}
-	result.Distribution = make([]judgment.OptionProbability, len(payload.Distribution))
-	for i, mass := range payload.Distribution {
+	if payload.Selected == nil {
+		return judgment.Choice{}, fmt.Errorf("%w: choice: missing required field \"selected\"", ErrInvalidResponse)
+	}
+	if payload.Distribution == nil {
+		return judgment.Choice{}, fmt.Errorf("%w: choice: missing required field \"distribution\"", ErrInvalidResponse)
+	}
+	result := judgment.Choice{Selected: *payload.Selected}
+	result.Distribution = make([]judgment.OptionProbability, len(*payload.Distribution))
+	for i, mass := range *payload.Distribution {
+		if mass.Option == nil {
+			return judgment.Choice{}, fmt.Errorf("%w: choice: distribution[%d] missing required field \"option\"", ErrInvalidResponse, i)
+		}
+		if mass.Probability == nil {
+			return judgment.Choice{}, fmt.Errorf("%w: choice: distribution[%d] missing required field \"probability\"", ErrInvalidResponse, i)
+		}
 		result.Distribution[i] = judgment.OptionProbability{
-			Option:      mass.Option,
-			Probability: judgment.Probability(mass.Probability),
+			Option:      *mass.Option,
+			Probability: judgment.Probability(*mass.Probability),
 		}
 	}
 	if err := judgment.ValidateChoice(request, result); err != nil {
@@ -169,7 +184,13 @@ func (a *Adapter) Score(ctx context.Context, request judgment.ScoreRequest) (jud
 	if err := a.generate(ctx, scoreInstruction(request), scoreSchema, &payload); err != nil {
 		return judgment.Score{}, err
 	}
-	result := judgment.Score{Value: payload.Value, Confidence: judgment.Probability(payload.Confidence)}
+	if payload.Value == nil {
+		return judgment.Score{}, fmt.Errorf("%w: score: missing required field \"value\"", ErrInvalidResponse)
+	}
+	if payload.Confidence == nil {
+		return judgment.Score{}, fmt.Errorf("%w: score: missing required field \"confidence\"", ErrInvalidResponse)
+	}
+	result := judgment.Score{Value: *payload.Value, Confidence: judgment.Probability(*payload.Confidence)}
 	if err := judgment.ValidateScore(request, result); err != nil {
 		return judgment.Score{}, fmt.Errorf("%w: score: %w", ErrInvalidResponse, err)
 	}
@@ -186,7 +207,13 @@ func (a *Adapter) Ask(ctx context.Context, request judgment.NoulRequest) (judgme
 	if err := a.generate(ctx, noulInstruction(request), noulSchema, &payload); err != nil {
 		return judgment.Noul{}, err
 	}
-	result := judgment.Noul{Verdict: judgment.Verdict(payload.Verdict), Confidence: judgment.Probability(payload.Confidence)}
+	if payload.Verdict == nil {
+		return judgment.Noul{}, fmt.Errorf("%w: noul: missing required field \"verdict\"", ErrInvalidResponse)
+	}
+	if payload.Confidence == nil {
+		return judgment.Noul{}, fmt.Errorf("%w: noul: missing required field \"confidence\"", ErrInvalidResponse)
+	}
+	result := judgment.Noul{Verdict: judgment.Verdict(*payload.Verdict), Confidence: judgment.Probability(*payload.Confidence)}
 	if err := judgment.ValidateNoul(request, result); err != nil {
 		return judgment.Noul{}, fmt.Errorf("%w: noul: %w", ErrInvalidResponse, err)
 	}
@@ -199,6 +226,9 @@ func (a *Adapter) generate(ctx context.Context, instruction string, schema []byt
 	raw, err := a.client.Generate(ctx, Request{Instruction: instruction, Schema: schema})
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrGenerate, err)
+	}
+	if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("%w: decode: top-level null", ErrInvalidResponse)
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
 		return fmt.Errorf("%w: decode: %w", ErrInvalidResponse, err)

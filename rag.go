@@ -47,6 +47,10 @@ func (a *App) Ingest(ctx context.Context, docs ...document.Document) (int, error
 		if err := retrieval.EmbedResults(ctx, a.embedder, items); err != nil {
 			return 0, err
 		}
+	} else {
+		if _, err := a.index.Search(ctx, IndexQuery{Identity: a.indexIdentity, Limit: 1}); err != nil {
+			return 0, err
+		}
 	}
 	replacements := make([]DocumentReplacement, len(docs))
 	byDocument := make(map[string]int, len(docs))
@@ -106,12 +110,12 @@ func (a *App) searchQueries(ctx context.Context, queries []string, opts []Search
 		nonblank = append(nonblank, query)
 		positions = append(positions, i)
 	}
-	if len(nonblank) == 0 {
-		return rows, nil
-	}
 	cfg, err := makeSearchConfig(opts)
 	if err != nil {
 		return nil, err
+	}
+	if len(nonblank) == 0 {
+		return rows, nil
 	}
 	request := embedding.Request{Inputs: nonblank, Kind: embedding.KindQuery}
 	embedded, err := a.embedder.Embed(ctx, request)

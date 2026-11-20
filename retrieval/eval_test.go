@@ -174,6 +174,64 @@ func TestEvaluate(t *testing.T) {
 	}
 }
 
+func TestEvaluateIgnoresNonPositiveRelevanceEntries(t *testing.T) {
+	t.Parallel()
+
+	query := EvalQuery{
+		ID: "q-zero-rel",
+		Relevant: map[string]float64{
+			"doc-rel":  1,
+			"doc-zero": 0,
+			"doc-neg":  -1,
+		},
+	}
+	results := []RankedResult{
+		{ID: "doc-rel", Score: 0.9},
+		{ID: "doc-zero", Score: 0.8},
+	}
+
+	got := Evaluate(query, results, 2)
+	approxEqual(t, "RecallAtK", got.RecallAtK, 1.0)
+	approxEqual(t, "PrecisionAtK", got.PrecisionAtK, 0.5)
+	approxEqual(t, "NDCGAtK", got.NDCGAtK, 1.0)
+
+	layers := EvaluateLayers(query, LayeredResults{
+		Candidates: results,
+		Final:      results,
+	}, 2)
+	if layers.RelevantCount != 1 {
+		t.Fatalf("LayerReport.RelevantCount = %d, want 1", layers.RelevantCount)
+	}
+	approxEqual(t, "CandidateRecall", layers.CandidateRecall, 1.0)
+
+	layersK0 := EvaluateLayers(query, LayeredResults{Candidates: results}, 0)
+	if layersK0.RelevantCount != 1 {
+		t.Fatalf("LayerReport(k=0).RelevantCount = %d, want 1", layersK0.RelevantCount)
+	}
+
+	segments := EvaluateSegments(query, results, 2, func(docID string) string {
+		if docID == "doc-rel" {
+			return "seg-a"
+		}
+		return "seg-b"
+	})
+	if len(segments) != 2 {
+		t.Fatalf("len(segments) = %d, want 2", len(segments))
+	}
+	if segments[0].Segment != "seg-a" || segments[0].RelevantCount != 1 || segments[0].HitCount != 1 {
+		t.Fatalf("seg-a = %+v, want RelevantCount=1 HitCount=1", segments[0])
+	}
+	if segments[1].Segment != "seg-b" || segments[1].RelevantCount != 0 || segments[1].HitCount != 0 {
+		t.Fatalf("seg-b = %+v, want RelevantCount=0 HitCount=0", segments[1])
+	}
+
+	src := EvaluateSource(query, SourceReport{Results: results}, 2)
+	if src.HitCount != 1 {
+		t.Fatalf("SourceReport.HitCount = %d, want 1", src.HitCount)
+	}
+	approxEqual(t, "SourceReport.CandidateRecall", src.CandidateRecall, 1.0)
+}
+
 func TestEvaluateRecallMonotonicAsKIncreases(t *testing.T) {
 	t.Parallel()
 

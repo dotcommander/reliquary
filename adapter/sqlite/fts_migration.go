@@ -20,20 +20,20 @@ func (i *Index) migrateFTS(ctx context.Context, repair bool) error {
 			return fmt.Errorf("migrate sqlite FTS schema: %w", err)
 		}
 		statements := []string{
-			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, filename TEXT NOT NULL, content TEXT NOT NULL, metadata TEXT NOT NULL, embedding TEXT NOT NULL, index_identity TEXT NOT NULL DEFAULT '')`, i.table),
-			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s_document_id ON %s(document_id)`, i.table, i.table),
-			fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(id UNINDEXED, content, filename)`, i.ftsTable),
-			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), index_identity TEXT, embedding_dimension INTEGER CHECK (embedding_dimension IS NULL OR embedding_dimension > 0), fts_version INTEGER NOT NULL DEFAULT 0)`, i.stateTable),
+			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, document_id TEXT NOT NULL, filename TEXT NOT NULL, content TEXT NOT NULL, metadata TEXT NOT NULL, embedding TEXT NOT NULL, index_identity TEXT NOT NULL DEFAULT '')`, i.quotedTable),
+			fmt.Sprintf(`CREATE INDEX IF NOT EXISTS %s ON %s(document_id)`, quoteIdentifier(i.table+"_document_id"), i.quotedTable),
+			fmt.Sprintf(`CREATE VIRTUAL TABLE IF NOT EXISTS %s USING fts5(id UNINDEXED, content, filename)`, i.quotedFTSTable),
+			fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), index_identity TEXT, embedding_dimension INTEGER CHECK (embedding_dimension IS NULL OR embedding_dimension > 0), fts_version INTEGER NOT NULL DEFAULT 0)`, i.quotedStateTable),
 		}
 		for _, statement := range statements {
 			if _, err := tx.ExecContext(ctx, statement); err != nil {
 				return fmt.Errorf("migrate sqlite index: %w", err)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN index_identity TEXT NOT NULL DEFAULT ''`, i.table)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN index_identity TEXT NOT NULL DEFAULT ''`, i.quotedTable)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate sqlite index identity: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN fts_version INTEGER NOT NULL DEFAULT 0`, i.stateTable)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN fts_version INTEGER NOT NULL DEFAULT 0`, i.quotedStateTable)); err != nil && !strings.Contains(err.Error(), "duplicate column name") {
 			return fmt.Errorf("migrate sqlite FTS version: %w", err)
 		}
 		// Continue validating identity/dimension drift even when the FTS
@@ -59,7 +59,7 @@ const currentFTSVersion = 1
 
 func (i *Index) ftsVersion(ctx context.Context, tx *sql.Tx) (int, error) {
 	var version int
-	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT fts_version FROM %s WHERE singleton = 1`, i.stateTable)).Scan(&version)
+	err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT fts_version FROM %s WHERE singleton = 1`, i.quotedStateTable)).Scan(&version)
 	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
@@ -73,13 +73,13 @@ func (i *Index) ftsVersion(ctx context.Context, tx *sql.Tx) (int, error) {
 }
 
 func (i *Index) rebuildFTS(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.ftsTable)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.quotedFTSTable)); err != nil {
 		return fmt.Errorf("rebuild sqlite FTS index: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) SELECT id, content, filename FROM %s`, i.ftsTable, i.table)); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) SELECT id, content, filename FROM %s`, i.quotedFTSTable, i.quotedTable)); err != nil {
 		return fmt.Errorf("repopulate sqlite FTS index: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, fts_version) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET fts_version=excluded.fts_version`, i.stateTable), currentFTSVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, fts_version) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET fts_version=excluded.fts_version`, i.quotedStateTable), currentFTSVersion); err != nil {
 		return fmt.Errorf("sqlite index: record FTS version: %w", err)
 	}
 	return nil

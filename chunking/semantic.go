@@ -110,11 +110,12 @@ func NewSemanticChunker(embedder BatchEmbedder, opts SemanticOpts) (*SemanticChu
 	if validate.IsNil(embedder) {
 		return nil, ErrNilEmbedder
 	}
+	defaults := opts.withDefaults()
 	return &SemanticChunker{
 		embedder: embedder,
-		opts:     opts.withDefaults(),
+		opts:     defaults,
 		fallback: newSmartBoundaryChunker(),
-		maxLimit: opts.MaxChunkChars,
+		maxLimit: defaults.MaxChunkChars,
 	}, nil
 }
 

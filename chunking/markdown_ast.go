@@ -24,7 +24,7 @@ func nodeByteSpan(node ast.Node) (start, end int) {
 		if cl.Len() == 0 {
 			// Recurse into grandchildren.
 			cs, ce := nodeByteSpan(child)
-			if cs == 0 && ce == 0 {
+			if cs < 0 || (cs == 0 && ce == 0) {
 				continue
 			}
 			if firstStart < 0 || cs < firstStart {

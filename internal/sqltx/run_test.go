@@ -2,6 +2,7 @@ package sqltx
 
 import (
 	"errors"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -99,4 +100,23 @@ func TestRun_PanicTriggersRollbackAndRepanics(t *testing.T) {
 		)
 	})
 	require.True(t, rolledBack, "rollback must run when fn panics")
+}
+
+func TestRun_GoexitTriggersRollback(t *testing.T) {
+	t.Parallel()
+
+	var rolledBack, committed bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = Run(
+			func() (string, error) { return "tx", nil },
+			func(string) error { rolledBack = true; return nil },
+			func(string) error { committed = true; return nil },
+			func(string) error { runtime.Goexit(); return nil },
+		)
+	}()
+	<-done
+	require.True(t, rolledBack, "rollback must run when fn calls runtime.Goexit")
+	require.False(t, committed, "commit must not run when fn calls runtime.Goexit")
 }

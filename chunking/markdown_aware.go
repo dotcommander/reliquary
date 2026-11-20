@@ -22,7 +22,7 @@ func (m *markdownAwareChunker) Strategy() Strategy {
 
 // separatorRowRe matches a markdown table separator row: cells containing only
 // -, :, whitespace, and optional pipes. Must have at least one dash per cell.
-var separatorRowRe = regexp.MustCompile(`^\|?[\s:]*-[-\s:]*\|.+\|?[\s:]*$`)
+var separatorRowRe = regexp.MustCompile(`^\|?(?:[\s:]*-+[-\s:]*\|)+[\s:]*(?:-+[-\s:]*\|?)?$`)
 
 func (m *markdownAwareChunker) Chunk(text string, size int, overlap int) []Chunk {
 	if size <= 0 || text == "" {
@@ -156,7 +156,7 @@ func splitMarkdownTableBlock(block string, size int) ([]string, bool) {
 	bodyStart := 1
 
 	// Check if the second line is a markdown separator row.
-	if len(nonEmpty) > 1 && separatorRowRe.MatchString(nonEmpty[1]) {
+	if len(nonEmpty) > 1 && isTableDelimiterRow(nonEmpty[1]) {
 		separator = nonEmpty[1]
 		bodyStart = 2
 	}

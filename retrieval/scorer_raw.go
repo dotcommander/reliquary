@@ -116,7 +116,7 @@ func (s *Scorer) RecalibrateRaw(queryText string, candidates []RawCandidate, tra
 		}
 	}
 	if sortResults {
-		slices.SortFunc(results, func(a, b *Result) int { return cmp.Compare(b.CombinedScore, a.CombinedScore) })
+		slices.SortStableFunc(results, func(a, b *Result) int { return cmp.Compare(b.CombinedScore, a.CombinedScore) })
 	}
 	if !trace {
 		return results, nil

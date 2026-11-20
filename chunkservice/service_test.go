@@ -3,6 +3,7 @@ package chunkservice
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -282,7 +283,7 @@ func (m *multiStubEmbedder) EmbedBatch(_ context.Context, texts []string) ([][]f
 	for i := range out {
 		out[i] = make([]float32, m.dims)
 		for j := range out[i] {
-			out[i][j] = float32(i)
+			out[i][j] = float32(i + 1)
 		}
 	}
 	return out, nil
@@ -362,4 +363,106 @@ func TestPreflightCounterSplitsBoundaryChunks(t *testing.T) {
 	if len(limited) <= len(base) {
 		t.Fatalf("preflight counter did not split further: %d chunks vs %d base", len(limited), len(base))
 	}
+}
+
+type funcBatchEmbedder func(ctx context.Context, texts []string) ([][]float32, error)
+
+func (f funcBatchEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	return f(ctx, texts)
+}
+
+func TestProcessRequestSemanticRejectsInvalidVectors(t *testing.T) {
+	t.Parallel()
+
+	multiUnitText := "The first sentence establishes the topic of this paragraph. The second sentence adds supporting detail and vocabulary. A third sentence provides enough units for semantic boundary detection to engage embedding at all."
+
+	cases := []struct {
+		name string
+		fn   funcBatchEmbedder
+	}{
+		{
+			name: "zero vector",
+			fn: func(_ context.Context, texts []string) ([][]float32, error) {
+				out := make([][]float32, len(texts))
+				for i := range out {
+					out[i] = []float32{0, 0, 0}
+				}
+				return out, nil
+			},
+		},
+		{
+			name: "NaN component",
+			fn: func(_ context.Context, texts []string) ([][]float32, error) {
+				out := make([][]float32, len(texts))
+				for i := range out {
+					out[i] = []float32{1, float32(math.NaN()), 0}
+				}
+				return out, nil
+			},
+		},
+		{
+			name: "Inf component",
+			fn: func(_ context.Context, texts []string) ([][]float32, error) {
+				out := make([][]float32, len(texts))
+				for i := range out {
+					out[i] = []float32{1, float32(math.Inf(1)), 0}
+				}
+				return out, nil
+			},
+		},
+		{
+			name: "dimension mismatch",
+			fn: func(_ context.Context, texts []string) ([][]float32, error) {
+				out := make([][]float32, len(texts))
+				for i := range out {
+					if i == 0 {
+						out[i] = []float32{1, 0, 0}
+					} else {
+						out[i] = []float32{1, 0}
+					}
+				}
+				return out, nil
+			},
+		},
+		{
+			name: "vector count mismatch",
+			fn: func(_ context.Context, _ []string) ([][]float32, error) {
+				return [][]float32{{1, 0, 0}}, nil
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := New().WithEmbedder(tc.fn)
+			_, err := svc.Process(context.Background(), Request{
+				Text:      multiUnitText,
+				ChunkSize: 400,
+				Strategy:  chunking.Semantic,
+			})
+			if err == nil {
+				t.Fatalf("expected error for %s, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), "refusing to emit fallback chunks as semantic") {
+				t.Fatalf("expected strict semantic error, got %v", err)
+			}
+		})
+	}
+
+	t.Run("short text without embedding still succeeds", func(t *testing.T) {
+		t.Parallel()
+		svc := New().WithEmbedder(&multiStubEmbedder{dims: 3})
+		resp, err := svc.Process(context.Background(), Request{
+			Text:      "Short text.",
+			ChunkSize: 100,
+			Strategy:  chunking.Semantic,
+		})
+		if err != nil {
+			t.Fatalf("short text should succeed: %v", err)
+		}
+		if len(resp.Chunks) != 1 || resp.Chunks[0].Text != "Short text." {
+			t.Fatalf("unexpected chunks: %+v", resp.Chunks)
+		}
+	})
 }

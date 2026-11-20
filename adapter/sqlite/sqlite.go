@@ -31,11 +31,18 @@ type Config struct {
 
 // Index uses caller-owned SQLite connectivity. New performs no database I/O.
 type Index struct {
-	db             *sql.DB
-	table          string
-	ftsTable       string
-	stateTable     string
-	candidateLimit int
+	db               *sql.DB
+	table            string
+	ftsTable         string
+	stateTable       string
+	quotedTable      string
+	quotedFTSTable   string
+	quotedStateTable string
+	candidateLimit   int
+}
+
+func quoteIdentifier(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 func New(db *sql.DB, cfg Config) (*Index, error) {
@@ -54,7 +61,18 @@ func New(db *sql.DB, cfg Config) (*Index, error) {
 	if cfg.CandidateLimit == 0 {
 		cfg.CandidateLimit = defaultCandidates
 	}
-	return &Index{db: db, table: cfg.Table, ftsTable: cfg.Table + "_fts", stateTable: cfg.Table + "_state", candidateLimit: cfg.CandidateLimit}, nil
+	ftsTable := cfg.Table + "_fts"
+	stateTable := cfg.Table + "_state"
+	return &Index{
+		db:               db,
+		table:            cfg.Table,
+		ftsTable:         ftsTable,
+		stateTable:       stateTable,
+		quotedTable:      quoteIdentifier(cfg.Table),
+		quotedFTSTable:   quoteIdentifier(ftsTable),
+		quotedStateTable: quoteIdentifier(stateTable),
+		candidateLimit:   cfg.CandidateLimit,
+	}, nil
 }
 
 func (i *Index) Upsert(ctx context.Context, items []*retrieval.Result) error {
@@ -119,10 +137,10 @@ func (i *Index) ReplaceDocuments(ctx context.Context, replacements []indexcontra
 			return err
 		}
 		for _, replacement := range replacements {
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE document_id = ?)`, i.ftsTable, i.table), replacement.DocumentID); err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE document_id = ?)`, i.quotedFTSTable, i.quotedTable), replacement.DocumentID); err != nil {
 				return fmt.Errorf("sqlite index: delete replacement FTS document %q: %w", replacement.DocumentID, err)
 			}
-			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = ?`, i.table), replacement.DocumentID); err != nil {
+			if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = ?`, i.quotedTable), replacement.DocumentID); err != nil {
 				return fmt.Errorf("sqlite index: delete replacement document %q: %w", replacement.DocumentID, err)
 			}
 		}
@@ -167,15 +185,15 @@ func (i *Index) writeItem(ctx context.Context, tx *sql.Tx, item *retrieval.Resul
 	if err != nil {
 		return fmt.Errorf("sqlite index: encode embedding for %q: %w", item.ID, err)
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, document_id, filename, content, metadata, embedding, index_identity) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET document_id=excluded.document_id, filename=excluded.filename, content=excluded.content, metadata=excluded.metadata, embedding=excluded.embedding, index_identity=excluded.index_identity`, i.table), item.ID, item.DocumentID, item.Filename, item.Content, string(metadata), string(embedding), item.IndexIdentity); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, document_id, filename, content, metadata, embedding, index_identity) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET document_id=excluded.document_id, filename=excluded.filename, content=excluded.content, metadata=excluded.metadata, embedding=excluded.embedding, index_identity=excluded.index_identity`, i.quotedTable), item.ID, item.DocumentID, item.Filename, item.Content, string(metadata), string(embedding), item.IndexIdentity); err != nil {
 		return fmt.Errorf("sqlite index: upsert %q: %w", item.ID, err)
 	}
 	if deletePriorFTS {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, i.ftsTable), item.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id = ?`, i.quotedFTSTable), item.ID); err != nil {
 			return fmt.Errorf("sqlite index: delete prior FTS row %q: %w", item.ID, err)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) VALUES (?, ?, ?)`, i.ftsTable), item.ID, item.Content, item.Filename); err != nil {
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (id, content, filename) VALUES (?, ?, ?)`, i.quotedFTSTable), item.ID, item.Content, item.Filename); err != nil {
 		return fmt.Errorf("sqlite index: insert FTS row %q: %w", item.ID, err)
 	}
 	return nil
@@ -189,10 +207,10 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 		return err
 	}
 	return withTx(ctx, i.db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE document_id = ?)`, i.ftsTable, i.table), documentID); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id IN (SELECT id FROM %s WHERE document_id = ?)`, i.quotedFTSTable, i.quotedTable), documentID); err != nil {
 			return fmt.Errorf("sqlite index: delete FTS document: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = ?`, i.table), documentID); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s WHERE document_id = ?`, i.quotedTable), documentID); err != nil {
 			return fmt.Errorf("sqlite index: delete document: %w", err)
 		}
 		return nil
@@ -202,13 +220,13 @@ func (i *Index) DeleteDocument(ctx context.Context, documentID string) error {
 // Reset destructively removes all indexed results and FTS entries.
 func (i *Index) Reset(ctx context.Context) error {
 	return withTx(ctx, i.db, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.ftsTable)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.quotedFTSTable)); err != nil {
 			return fmt.Errorf("sqlite index: reset FTS: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.table)); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`DELETE FROM %s`, i.quotedTable)); err != nil {
 			return fmt.Errorf("sqlite index: reset: %w", err)
 		}
-		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, fts_version) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET index_identity=NULL, embedding_dimension=NULL, fts_version=excluded.fts_version`, i.stateTable), currentFTSVersion); err != nil {
+		if _, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, fts_version) VALUES (1, ?) ON CONFLICT(singleton) DO UPDATE SET index_identity=NULL, embedding_dimension=NULL, fts_version=excluded.fts_version`, i.quotedStateTable), currentFTSVersion); err != nil {
 			return fmt.Errorf("sqlite index: reset state: %w", err)
 		}
 		return nil
@@ -255,23 +273,23 @@ func (i *Index) searchSnapshot(ctx context.Context, tx *sql.Tx, query indexcontr
 		return nil, err
 	}
 	limit := 0
-	if query.Limit == 0 {
+	if query.Limit <= 0 {
 		limit = i.candidateLimit
-	} else if query.Limit > 0 {
+	} else {
 		limit = max(i.candidateLimit, query.Limit)
 	}
-	from := i.table + " AS r"
+	from := i.quotedTable + " AS r"
 	orderBy := "r.id"
 	if strings.TrimSpace(query.Text) != "" {
-		from += " JOIN " + i.ftsTable + " AS f ON f.id=r.id"
+		from += " JOIN " + i.quotedFTSTable + " AS f ON f.id=r.id"
 		if where != "" {
 			where += " AND "
 		} else {
 			where = " WHERE "
 		}
-		where += i.ftsTable + " MATCH ?"
+		where += i.quotedFTSTable + " MATCH ?"
 		args = append(args, plainTextFTSQuery(query.Text))
-		orderBy = "bm25(" + i.ftsTable + "), r.id"
+		orderBy = "bm25(" + i.quotedFTSTable + "), r.id"
 	}
 	statement := fmt.Sprintf(`SELECT r.id, r.document_id, r.filename, r.content, r.metadata, r.embedding, r.index_identity FROM %s%s ORDER BY %s`, from, where, orderBy)
 	statement, args = boundCandidateQuery(statement, args, query.Filter, limit)
@@ -326,7 +344,7 @@ func plainTextFTSQuery(text string) string {
 func (i *Index) readState(ctx context.Context, q queryer) (indexutil.Space, error) {
 	var identity sql.NullString
 	var dimension sql.NullInt64
-	err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT index_identity, embedding_dimension FROM %s WHERE singleton = 1`, i.stateTable)).Scan(&identity, &dimension)
+	err := q.QueryRowContext(ctx, fmt.Sprintf(`SELECT index_identity, embedding_dimension FROM %s WHERE singleton = 1`, i.quotedStateTable)).Scan(&identity, &dimension)
 	if errors.Is(err, sql.ErrNoRows) {
 		return indexutil.Space{}, nil
 	}
@@ -348,7 +366,7 @@ func (i *Index) writeState(ctx context.Context, tx *sql.Tx, state indexutil.Spac
 	if state.Dimension > 0 {
 		dimension = state.Dimension
 	}
-	_, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, index_identity, embedding_dimension) VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET index_identity=excluded.index_identity, embedding_dimension=excluded.embedding_dimension`, i.stateTable), identity, dimension)
+	_, err := tx.ExecContext(ctx, fmt.Sprintf(`INSERT INTO %s (singleton, index_identity, embedding_dimension) VALUES (1, ?, ?) ON CONFLICT(singleton) DO UPDATE SET index_identity=excluded.index_identity, embedding_dimension=excluded.embedding_dimension`, i.quotedStateTable), identity, dimension)
 	if err != nil {
 		return fmt.Errorf("sqlite index: write state: %w", err)
 	}
@@ -362,7 +380,7 @@ func (i *Index) backfillState(ctx context.Context, tx *sql.Tx) error {
 	}
 	var minimum, maximum string
 	var count int
-	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COALESCE(MIN(index_identity), ''), COALESCE(MAX(index_identity), ''), COUNT(*) FROM %s`, i.table)).Scan(&minimum, &maximum, &count); err != nil {
+	if err := tx.QueryRowContext(ctx, fmt.Sprintf(`SELECT COALESCE(MIN(index_identity), ''), COALESCE(MAX(index_identity), ''), COUNT(*) FROM %s`, i.quotedTable)).Scan(&minimum, &maximum, &count); err != nil {
 		return fmt.Errorf("sqlite index: inspect legacy identities: %w", err)
 	}
 	if minimum != maximum {
@@ -372,7 +390,7 @@ func (i *Index) backfillState(ctx context.Context, tx *sql.Tx) error {
 	if count > 0 {
 		legacy.Identity, legacy.IdentitySet = minimum, true
 	}
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT embedding FROM %s WHERE embedding != 'null' AND embedding != '[]'`, i.table))
+	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`SELECT embedding FROM %s WHERE embedding != 'null' AND embedding != '[]'`, i.quotedTable))
 	if err != nil {
 		return fmt.Errorf("sqlite index: inspect legacy dimensions: %w", err)
 	}
@@ -463,7 +481,12 @@ func buildFilters(filters map[string]any) (string, []any, error) {
 func withTx(ctx context.Context, db *sql.DB, fn func(*sql.Tx) error) error {
 	return sqltx.Run(
 		func() (*sql.Tx, error) { return db.BeginTx(ctx, nil) },
-		func(tx *sql.Tx) error { return tx.Rollback() },
+		func(tx *sql.Tx) error {
+			if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+				return err
+			}
+			return nil
+		},
 		func(tx *sql.Tx) error { return tx.Commit() },
 		fn,
 	)

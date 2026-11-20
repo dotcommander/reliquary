@@ -26,6 +26,9 @@ func SearchScoredCandidates(ctx context.Context, query indexcontract.IndexQuery,
 		if len(query.Vector) > 0 && len(item.Embedding) > 0 && len(query.Vector) != len(item.Embedding) {
 			return nil, fmt.Errorf("%w: query has %d dimensions, item %q has %d", indexcontract.ErrDimensionMismatch, len(query.Vector), item.ID, len(item.Embedding))
 		}
+		if len(query.RawVector) > 0 && len(item.Embedding) > 0 && len(query.RawVector) != len(item.Embedding) {
+			return nil, fmt.Errorf("%w: query raw vector has %d dimensions, item %q has %d", indexcontract.ErrDimensionMismatch, len(query.RawVector), item.ID, len(item.Embedding))
+		}
 		cp := *item
 		cp.Explain = nil
 		candidates = append(candidates, &cp)

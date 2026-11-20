@@ -137,6 +137,21 @@ func TestFindOptimalKWithHACImpossibleRange(t *testing.T) {
 	}
 }
 
+func TestFindOptimalKWithHACEmptyInput(t *testing.T) {
+	t.Parallel()
+
+	for _, input := range [][][]float64{nil, {}} {
+		result := FindOptimalK(input, SilhouetteConfig{
+			MinK:      2,
+			MaxK:      5,
+			Algorithm: "hac",
+		})
+		if result.BestK != 0 || result.BestScore != 0 || result.Scores != nil || result.KValues != nil || result.Assignments != nil || result.Centroids != nil {
+			t.Fatalf("FindOptimalK empty HAC input = %+v, want empty result", result)
+		}
+	}
+}
+
 func TestFindOptimalKSmallDataset(t *testing.T) {
 	t.Parallel()
 	// Too few points to cluster meaningfully

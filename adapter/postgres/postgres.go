@@ -433,8 +433,8 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 	if err := indexutil.ValidateFilter(query.Filter); err != nil {
 		return "", nil, fmt.Errorf("postgres index: %w", err)
 	}
-	args := make([]any, 0, len(query.Filter)+1)
-	where := make([]string, 0, len(query.Filter)+1)
+	args := make([]any, 0, len(query.Filter)*2+1)
+	where := make([]string, 0, len(query.Filter)*2+1)
 	keys := make([]string, 0, len(query.Filter))
 	for key := range query.Filter {
 		keys = append(keys, key)
@@ -456,7 +456,10 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 				return "", nil, fmt.Errorf("encode postgres index filter %q: %w", key, err)
 			}
 			args = append(args, encoded)
-			where = append(where, fmt.Sprintf(`metadata @> $%d::jsonb`, len(args)))
+			valueArg := len(args)
+			args = append(args, key)
+			keyArg := len(args)
+			where = append(where, fmt.Sprintf(`metadata @> $%d::jsonb AND jsonb_typeof(metadata -> $%d) = '%s'`, valueArg, keyArg, jsonbScalarType(value)))
 		}
 	}
 
@@ -467,7 +470,7 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 		order = fmt.Sprintf(`embedding <=> $%d NULLS LAST, id ASC`, len(args))
 	}
 	statement := fmt.Sprintf(`SELECT id, document_id, filename, content, metadata, embedding, index_identity FROM %s`, i.quoted)
-	if i.lexicalCandidateLimit > 0 && query.Text != "" && len(query.Vector) == 0 {
+	if i.lexicalCandidateLimit > 0 && strings.TrimSpace(query.Text) != "" && len(query.Vector) == 0 {
 		return i.lexicalCandidateQuery(statement, where, args, query)
 	}
 	if len(where) > 0 {
@@ -479,6 +482,19 @@ func (i *Index) searchQuery(query indexcontract.IndexQuery) (string, []any, erro
 		statement += fmt.Sprintf(` LIMIT $%d`, len(args))
 	}
 	return statement, args, nil
+}
+
+func jsonbScalarType(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case string:
+		return "string"
+	case bool:
+		return "boolean"
+	default:
+		return "number"
+	}
 }
 
 func validateIdentifier(name string) error {

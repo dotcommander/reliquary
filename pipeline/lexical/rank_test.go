@@ -1,6 +1,7 @@
 package lexical
 
 import (
+	"math"
 	"reflect"
 	"testing"
 
@@ -176,5 +177,53 @@ func TestLexicalVectorRetrievalInterop(t *testing.T) {
 
 	if report.FinalMetrics.RecallAtK != 1 {
 		t.Fatalf("Final RecallAtK = %f, want lexical/vector fused ranks to evaluate through retrieval", report.FinalMetrics.RecallAtK)
+	}
+}
+
+func TestRankByScore_NaNStrictWeakOrdering(t *testing.T) {
+	t.Parallel()
+
+	items := []Candidate{
+		{ID: "nan-b", Score: math.NaN()},
+		{ID: "mid", Score: 1.5},
+		{ID: "neg-inf", Score: math.Inf(-1)},
+		{ID: "nan-a", Score: math.NaN()},
+		{ID: "high", Score: 3.0},
+		{ID: "pos-inf", Score: math.Inf(1)},
+	}
+	got := RankByScore(items)
+	want := []string{"pos-inf", "high", "mid", "neg-inf", "nan-a", "nan-b"}
+	if ids := RankedIDs(got); !reflect.DeepEqual(ids, want) {
+		t.Fatalf("RankedIDs() = %#v, want %#v", ids, want)
+	}
+	for i := range items {
+		if compareCandidates(items[i], items[i]) != 0 {
+			t.Fatalf("compareCandidates not reflexive for %+v", items[i])
+		}
+		for j := range items {
+			ab := compareCandidates(items[i], items[j])
+			ba := compareCandidates(items[j], items[i])
+			if ab != -ba {
+				t.Fatalf("compareCandidates not antisymmetric for (%+v, %+v): %d vs %d", items[i], items[j], ab, ba)
+			}
+		}
+	}
+}
+
+func TestFuseRRFByID_NonFiniteWeightsDefaultToOne(t *testing.T) {
+	t.Parallel()
+
+	for _, badWeight := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		got := FuseRRFByID([]FusionInput{
+			{Source: "a", Weight: badWeight, Candidates: RankedList{{ID: "doc-1"}, {ID: "doc-2"}}},
+			{Source: "b", Weight: 1.0, Candidates: RankedList{{ID: "doc-2"}, {ID: "doc-1"}}},
+		}, FusionOptions{K: 60})
+		want := FuseRRFByID([]FusionInput{
+			{Source: "a", Weight: 1.0, Candidates: RankedList{{ID: "doc-1"}, {ID: "doc-2"}}},
+			{Source: "b", Weight: 1.0, Candidates: RankedList{{ID: "doc-2"}, {ID: "doc-1"}}},
+		}, FusionOptions{K: 60})
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("FuseRRFByID(weight=%v) = %#v, want %#v", badWeight, got, want)
+		}
 	}
 }

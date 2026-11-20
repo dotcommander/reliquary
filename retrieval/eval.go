@@ -76,8 +76,9 @@ type Metrics struct {
 // FinalDeltaRecallAtK is Final.RecallAtK minus CandidateMetrics.RecallAtK.
 func EvaluateLayers(query EvalQuery, layers LayeredResults, k int) LayerReport {
 	candidates := canonicalRankedResults(layers.Candidates)
+	relevantCount := positiveRelevantCount(query.Relevant)
 	if k <= 0 {
-		return LayerReport{RelevantCount: len(query.Relevant), CandidateCount: len(candidates)}
+		return LayerReport{RelevantCount: relevantCount, CandidateCount: len(candidates)}
 	}
 	candidateMetrics := Evaluate(query, candidates, k)
 	rerankMetrics := Evaluate(query, layers.Reranked, k)
@@ -85,11 +86,11 @@ func EvaluateLayers(query EvalQuery, layers LayeredResults, k int) LayerReport {
 	finalMetrics := Evaluate(query, layers.Final, k)
 	candidateHits := hitCount(query.Relevant, candidates)
 	candidateRecall := 0.0
-	if len(query.Relevant) > 0 {
-		candidateRecall = float64(candidateHits) / float64(len(query.Relevant))
+	if relevantCount > 0 {
+		candidateRecall = float64(candidateHits) / float64(relevantCount)
 	}
 	return LayerReport{
-		RelevantCount:       len(query.Relevant),
+		RelevantCount:       relevantCount,
 		CandidateCount:      len(candidates),
 		CandidateHitCount:   candidateHits,
 		CandidateRecall:     candidateRecall,
@@ -114,6 +115,9 @@ func EvaluateSegments(query EvalQuery, results []RankedResult, k int, segmenter 
 	limit := min(k, len(results))
 	relevantBySegment := make(map[string]map[string]float64)
 	for id, relevance := range query.Relevant {
+		if relevance <= 0 {
+			continue
+		}
 		segment := segmenter(id)
 		if segment == "" {
 			continue
@@ -175,7 +179,8 @@ func Evaluate(query EvalQuery, results []RankedResult, k int) Metrics {
 	}
 	results = canonicalRankedResults(results)
 	limit := min(k, len(results))
-	if len(query.Relevant) == 0 {
+	relevantCount := positiveRelevantCount(query.Relevant)
+	if relevantCount == 0 {
 		return Metrics{UniqueTopicAtK: uniqueTopics(results[:limit], query.TopicByDoc)}
 	}
 
@@ -201,12 +206,22 @@ func Evaluate(query EvalQuery, results []RankedResult, k int) Metrics {
 	}
 
 	return Metrics{
-		RecallAtK:      float64(hits) / float64(len(query.Relevant)),
+		RecallAtK:      float64(hits) / float64(relevantCount),
 		PrecisionAtK:   float64(hits) / float64(k),
 		MRR:            reciprocalRank,
 		NDCGAtK:        ndcg,
 		UniqueTopicAtK: uniqueTopics(results[:limit], query.TopicByDoc),
 	}
+}
+
+func positiveRelevantCount(relevant map[string]float64) int {
+	count := 0
+	for _, rel := range relevant {
+		if rel > 0 {
+			count++
+		}
+	}
+	return count
 }
 
 func uniqueTopics(results []RankedResult, topicByDoc map[string]string) int {

@@ -132,7 +132,7 @@ func TestSearchBatchAllBlankDoesNoIO(t *testing.T) {
 	index := &batchRecordingIndex{err: errors.New("must not search"), failAt: 1}
 	app := newBatchTestApp(t, embedder, index)
 
-	rows, err := app.SearchBatch(context.Background(), []string{"", " \t"}, reliquary.WithFilter(map[string]any{"bad": []string{"ignored"}}))
+	rows, err := app.SearchBatch(context.Background(), []string{"", " \t"}, reliquary.WithFilter(map[string]any{"env": "prod"}))
 	if err != nil {
 		t.Fatalf("SearchBatch all blank: %v", err)
 	}
@@ -144,15 +144,23 @@ func TestSearchBatchAllBlankDoesNoIO(t *testing.T) {
 	}
 }
 
-func TestSearchBlankIgnoresOptionsAndDoesNoIO(t *testing.T) {
+func TestSearchBlankValidatesOptionsAndDoesNoIO(t *testing.T) {
 	embedder := &batchRecordingEmbedder{err: errors.New("must not embed")}
 	index := &batchRecordingIndex{err: errors.New("must not search"), failAt: 1}
 	app := newBatchTestApp(t, embedder, index)
-	opts := []reliquary.SearchOption{reliquary.WithFilter(map[string]any{"bad": []string{"ignored"}})}
 
-	results, err := app.Search(context.Background(), " \t", opts...)
+	results, err := app.Search(context.Background(), " \t", reliquary.WithFilter(map[string]any{"env": "prod"}))
 	if err != nil || results != nil {
-		t.Fatalf("Search blank = %#v, %v, want nil, nil", results, err)
+		t.Fatalf("Search blank valid filter = %#v, %v, want nil, nil", results, err)
+	}
+	if embedder.calls != 0 || len(index.queries) != 0 {
+		t.Fatalf("I/O calls = embed %d, index %d", embedder.calls, len(index.queries))
+	}
+
+	opts := []reliquary.SearchOption{reliquary.WithFilter(map[string]any{"bad": []string{"invalid"}})}
+	results, err = app.Search(context.Background(), " \t", opts...)
+	if err == nil || results != nil {
+		t.Fatalf("Search blank invalid filter = %#v, %v, want nil, error", results, err)
 	}
 	if embedder.calls != 0 || len(index.queries) != 0 {
 		t.Fatalf("I/O calls = embed %d, index %d", embedder.calls, len(index.queries))

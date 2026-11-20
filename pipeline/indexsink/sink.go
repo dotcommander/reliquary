@@ -70,6 +70,9 @@ func (s *Sink) Write(ctx context.Context, batch ingest.Batch[*retrieval.Result])
 		items = append(items, &item)
 	}
 	report := ingest.Report{Read: len(batch.Records), Skipped: skipped, Cursor: batch.Cursor}
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
 	if len(items) == 0 {
 		return report, nil
 	}

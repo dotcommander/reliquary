@@ -123,6 +123,18 @@ func TestKMeans_InvalidInputsDoNotPanic(t *testing.T) {
 func TestFindOptimalK_InvalidInputs(t *testing.T) {
 	t.Parallel()
 
+	if k, score := FindOptimalK(nil, 1, 3, nil); k != 0 || score != 0 {
+		t.Fatalf("nil FindOptimalK = (%d, %v), want (0, 0)", k, score)
+	}
+	if k, score := FindOptimalK([][]float32{}, 1, 3, nil); k != 0 || score != 0 {
+		t.Fatalf("empty FindOptimalK = (%d, %v), want (0, 0)", k, score)
+	}
+	if dims, ok := kmeansInputDims(nil); dims != 0 || ok {
+		t.Fatalf("kmeansInputDims(nil) = (%d, %v), want (0, false)", dims, ok)
+	}
+	if dims, ok := kmeansInputDims([][]float32{}); dims != 0 || ok {
+		t.Fatalf("kmeansInputDims(empty) = (%d, %v), want (0, false)", dims, ok)
+	}
 	if k, score := FindOptimalK([][]float32{{1, 0}, {0, 1, 0}}, 1, 3, nil); k != 0 || score != 0 {
 		t.Fatalf("ragged FindOptimalK = (%d, %v), want (0, 0)", k, score)
 	}

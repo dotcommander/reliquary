@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.19.0 (2026-11-20)
+
+### Fixed
+
+- Preserve chunk metadata and heading paths when splitting on size or token
+  limits. Correct Markdown table handling and source spans, and enforce the
+  default semantic chunk size ceiling.
+- Reject malformed embeddings in strict semantic chunking and missing or null
+  required fields in structured judgments.
+- Validate search options even for blank queries and check index identity
+  before replacing documents when there are no chunks to write.
+- Tighten PostgreSQL scalar filtering and SQLite candidate limits, and support
+  SQLite table names that are SQL keywords.
+- Keep equal-score results in input order during recalibration, ignore
+  non-finite scoring signals, and count only positive relevance in recall.
+- Stop ingestion on cancellation and honor the requested clustering linkage
+  during automatic cluster-count selection.
+
+### Changed
+
+- Update the existing PostgreSQL, OpenAI, and SQLite adapter dependencies.
+
+### Compatibility
+
+- Use keyed `clustering.SilhouetteConfig` literals. The new `Linkage` field
+  defaults to average linkage when omitted.
+- If the corrected chunking behavior changes boundaries for your documents,
+  update the index identity and rebuild the index by re-ingesting the corpus.
+
 ## v0.17.0 (2026-10-31)
 
 ### Added

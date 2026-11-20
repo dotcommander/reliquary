@@ -170,7 +170,7 @@ func FuseRRFByID(inputs []FusionInput, options FusionOptions) RankedList {
 	sources := make(map[string]string)
 	for _, input := range inputs {
 		weight := input.Weight
-		if weight == 0 {
+		if math.IsNaN(weight) || math.IsInf(weight, 0) || weight == 0 {
 			weight = 1
 		}
 		seen := make(map[string]struct{}, len(input.Candidates))
@@ -231,7 +231,16 @@ func assignRanks(list RankedList) {
 }
 
 func compareCandidates(a, b Candidate) int {
-	if a.Score != b.Score {
+	aNaN := math.IsNaN(a.Score)
+	bNaN := math.IsNaN(b.Score)
+	switch {
+	case aNaN && bNaN:
+		// Equal on score; fall through to ID/Source tie-break.
+	case aNaN:
+		return 1
+	case bNaN:
+		return -1
+	case a.Score != b.Score:
 		if a.Score < b.Score {
 			return 1
 		}

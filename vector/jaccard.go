@@ -9,8 +9,8 @@ import (
 var (
 	codeBlockRE  = regexp.MustCompile("(?s)```[\\s\\S]*?```")
 	tildeBlockRE = regexp.MustCompile(`(?s)~.*?~`)
-	mathBlockRE  = regexp.MustCompile(`(?s)\\$.*?\\$`)
-	urlRE        = regexp.MustCompile(`https?://[^\\s]+`)
+	mathBlockRE  = regexp.MustCompile(`(?s)\$.*?\$`)
+	urlRE        = regexp.MustCompile(`https?://[^\s]+`)
 	wordRegex    = regexp.MustCompile(`[a-zA-Z0-9]{2,}`)
 )
 

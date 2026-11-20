@@ -95,15 +95,15 @@ func calibrateScores(results []*Result, channels scoreChannels, presenceByResult
 
 	for _, result := range results {
 		presence := presenceByResult[result]
-		if channels.embedding && presence.Embedding {
+		if channels.embedding && presence.Embedding && isFinite(result.EmbeddingScore) {
 			minEmb = min(minEmb, result.EmbeddingScore)
 			maxEmb = max(maxEmb, result.EmbeddingScore)
 		}
-		if channels.keyword && presence.Keyword {
+		if channels.keyword && presence.Keyword && isFinite(result.KeywordScore) {
 			minKwd = min(minKwd, result.KeywordScore)
 			maxKwd = max(maxKwd, result.KeywordScore)
 		}
-		if channels.filename && presence.Filename {
+		if channels.filename && presence.Filename && isFinite(result.FilenameScore) {
 			minFn = min(minFn, result.FilenameScore)
 			maxFn = max(maxFn, result.FilenameScore)
 		}
@@ -148,7 +148,17 @@ func weightedScore(weights Weights, signals ScoreSignals) float64 {
 	return weighted.Embedding + weighted.Keyword + weighted.Filename + weighted.Recency + weighted.Importance
 }
 
+func isFinite(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0)
+}
+
 func normalizeValue(val, minValue, maxValue float64) float64 {
+	if !isFinite(val) {
+		return 0
+	}
+	if !isFinite(minValue) || !isFinite(maxValue) || maxValue < minValue {
+		return 0
+	}
 	if maxValue-minValue < 1e-10 {
 		return 0.5
 	}

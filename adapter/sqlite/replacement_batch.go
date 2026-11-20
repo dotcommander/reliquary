@@ -31,7 +31,7 @@ func (i *Index) deleteReplacementFTS(ctx context.Context, tx *sql.Tx, items []*r
 		if len(ids) == 0 {
 			continue
 		}
-		query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (%s)`, i.ftsTable, strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","))
+		query := fmt.Sprintf(`DELETE FROM %s WHERE id IN (%s)`, i.quotedFTSTable, strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","))
 		if _, err := tx.ExecContext(ctx, query, ids...); err != nil {
 			return fmt.Errorf("sqlite index: delete prior replacement FTS rows: %w", err)
 		}
@@ -56,7 +56,7 @@ func (i *Index) checkRetainedReplacementIDs(ctx context.Context, tx *sql.Tx, ite
 		if len(ids) == 0 {
 			continue
 		}
-		query := fmt.Sprintf(`SELECT id, document_id FROM %s WHERE id IN (%s)`, i.table, strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","))
+		query := fmt.Sprintf(`SELECT id, document_id FROM %s WHERE id IN (%s)`, i.quotedTable, strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","))
 		rows, err := tx.QueryContext(ctx, query, ids...)
 		if err != nil {
 			return fmt.Errorf("sqlite index: inspect replacement IDs: %w", err)

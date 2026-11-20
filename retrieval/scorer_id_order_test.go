@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"container/heap"
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -111,5 +112,79 @@ func TestRerankEmbeddingByIDPreservesScoringAndLegacyTieOrder(t *testing.T) {
 				t.Fatalf("scoring changed for %q: got %+v, reference %+v", item.ID, item, reference)
 			}
 		}
+	}
+}
+
+func TestRecalibrateRawPreservesStableTieOrder(t *testing.T) {
+	t.Parallel()
+
+	const tiedCount = 24
+	candidates := make([]RawCandidate, 0, tiedCount+2)
+	candidates = append(candidates, RawCandidate{
+		Result:  &Result{ID: "low"},
+		Raw:     ScoreSignals{Embedding: 0.1},
+		Present: SignalPresence{Embedding: true},
+	})
+	wantTiedIDs := make([]string, 0, tiedCount)
+	for i := tiedCount - 1; i >= 0; i-- {
+		id := fmt.Sprintf("tied-%02d", i)
+		wantTiedIDs = append(wantTiedIDs, id)
+		candidates = append(candidates, RawCandidate{
+			Result:  &Result{ID: id},
+			Raw:     ScoreSignals{Embedding: 0.5},
+			Present: SignalPresence{Embedding: true},
+		})
+	}
+	candidates = append(candidates, RawCandidate{
+		Result:  &Result{ID: "high"},
+		Raw:     ScoreSignals{Embedding: 0.9},
+		Present: SignalPresence{Embedding: true},
+	})
+
+	scorer := NewScorer(DefaultWeights())
+	got, _ := scorer.RecalibrateRaw("alpha", candidates, false, true)
+	if len(got) != tiedCount+2 {
+		t.Fatalf("len(got) = %d, want %d", len(got), tiedCount+2)
+	}
+	if got[0].ID != "high" || got[len(got)-1].ID != "low" {
+		t.Fatalf("extremes = (%q, %q), want (high, low)", got[0].ID, got[len(got)-1].ID)
+	}
+	for i, wantID := range wantTiedIDs {
+		if got[i+1].ID != wantID {
+			t.Fatalf("tied position %d = %q, want %q (unstable sort reordered ties)", i, got[i+1].ID, wantID)
+		}
+	}
+}
+
+func TestCalibrateScoresIgnoresNonFiniteSignals(t *testing.T) {
+	t.Parallel()
+
+	scorer := NewScorer(DefaultWeights())
+	results := []*Result{
+		{ID: "nan-doc", Content: "alpha", Embedding: []float64{math.NaN(), 0}},
+		{ID: "inf-doc", Content: "alpha", Embedding: []float64{math.Inf(1), 0}},
+		{ID: "low-doc", Content: "alpha", Embedding: []float64{0, 1}},
+		{ID: "high-doc", Content: "alpha", Embedding: []float64{1, 0}},
+	}
+	ranked := scorer.RerankEmbeddingByID(embedding.Vector{1, 0}, "alpha", results)
+
+	byID := make(map[string]*Result, len(ranked))
+	for _, r := range ranked {
+		byID[r.ID] = r
+		if math.IsNaN(r.EmbeddingScore) || math.IsInf(r.EmbeddingScore, 0) || math.IsNaN(r.CombinedScore) || math.IsInf(r.CombinedScore, 0) {
+			t.Fatalf("result %q has non-finite calibrated score: %+v", r.ID, r)
+		}
+	}
+	if byID["high-doc"].EmbeddingScore != 1.0 {
+		t.Fatalf("high-doc EmbeddingScore = %v, want 1.0", byID["high-doc"].EmbeddingScore)
+	}
+	if byID["low-doc"].EmbeddingScore != 0.0 {
+		t.Fatalf("low-doc EmbeddingScore = %v, want 0.0", byID["low-doc"].EmbeddingScore)
+	}
+	if byID["nan-doc"].EmbeddingScore != 0.0 || byID["inf-doc"].EmbeddingScore != 0.0 {
+		t.Fatalf("non-finite docs EmbeddingScore = (%v, %v), want (0, 0)", byID["nan-doc"].EmbeddingScore, byID["inf-doc"].EmbeddingScore)
+	}
+	if ranked[0].ID != "high-doc" {
+		t.Fatalf("top ranked ID = %q, want high-doc", ranked[0].ID)
 	}
 }

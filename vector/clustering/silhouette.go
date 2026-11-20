@@ -4,9 +4,10 @@ import "github.com/dotcommander/reliquary/vector"
 
 // SilhouetteConfig holds configuration for silhouette-based auto-k selection.
 type SilhouetteConfig struct {
-	MinK      int    // minimum k to try (default: 2)
-	MaxK      int    // maximum k to try (default: 20)
-	Algorithm string // "kmeans" or "hac" (default: "kmeans")
+	MinK      int     // minimum k to try (default: 2)
+	MaxK      int     // maximum k to try (default: 20)
+	Algorithm string  // "kmeans" or "hac" (default: "kmeans")
+	Linkage   Linkage // HAC linkage method (default: LinkageAverage)
 }
 
 // DefaultSilhouetteConfig returns default silhouette configuration.
@@ -15,6 +16,7 @@ func DefaultSilhouetteConfig() SilhouetteConfig {
 		MinK:      2,
 		MaxK:      20,
 		Algorithm: "kmeans",
+		Linkage:   LinkageAverage,
 	}
 }
 
@@ -59,6 +61,9 @@ func FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResul
 	}
 
 	n := len(embeddings)
+	if n == 0 {
+		return &SilhouetteResult{}
+	}
 	if n <= 2 {
 		return &SilhouetteResult{
 			BestK:       1,
@@ -85,6 +90,11 @@ func FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResul
 		return &SilhouetteResult{}
 	}
 
+	linkage := cfg.Linkage
+	if linkage == "" {
+		linkage = LinkageAverage
+	}
+
 	bestK := 0
 	bestScore := -2.0
 	var bestAssignments []int
@@ -93,7 +103,7 @@ func FindOptimalK(embeddings [][]float64, cfg SilhouetteConfig) *SilhouetteResul
 	var kValues []int
 
 	for k := minK; k <= maxK; k++ {
-		result := HAC(embeddings, HACConfig{K: k, Linkage: LinkageAverage})
+		result := HAC(embeddings, HACConfig{K: k, Linkage: linkage})
 		score := AverageSilhouetteScore(embeddings, result.Assignments)
 		scores = append(scores, score)
 		kValues = append(kValues, k)

@@ -25,12 +25,12 @@ func TestTextSearchQueryRanksBeforeLimit(t *testing.T) {
 	if strings.Contains(statement, " LIMIT ") {
 		t.Fatalf("text query truncated before ranking: %s", statement)
 	}
-	for _, want := range []string{`document_id = $1`, `metadata @> $2::jsonb`, `ORDER BY id ASC`} {
+	for _, want := range []string{`document_id = $1`, `metadata @> $2::jsonb AND jsonb_typeof(metadata -> $3) = 'string'`, `ORDER BY id ASC`} {
 		if !strings.Contains(statement, want) {
 			t.Fatalf("query %q missing %q", statement, want)
 		}
 	}
-	if len(args) != 2 || args[0] != "doc" {
+	if len(args) != 3 || args[0] != "doc" || args[2] != "tenant" {
 		t.Fatalf("filter args = %#v", args)
 	}
 	var filter map[string]any

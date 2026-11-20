@@ -181,6 +181,7 @@ func (s *service) clusterHAC(embeddings [][]float64, opts ClusterOptions) (*Clus
 			MinK:      2,
 			MaxK:      maxK,
 			Algorithm: "hac",
+			Linkage:   linkage,
 		})
 		return &ClusterResult{
 			Assignments: silResult.Assignments,

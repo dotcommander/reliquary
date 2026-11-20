@@ -23,7 +23,7 @@ func DefaultBM25Params() BM25Params {
 // intentionally not normalized here; callers should adapt their rank order at
 // the application boundary.
 func BM25Score(query Query, doc DocumentStats, corpus CorpusStats, params BM25Params) float64 {
-	if query.Empty() || doc.Length <= 0 || corpus.DocumentCount <= 0 || corpus.AverageDocumentLength <= 0 {
+	if query.Empty() || doc.Length <= 0 || corpus.DocumentCount <= 0 || corpus.AverageDocumentLength <= 0 || math.IsNaN(corpus.AverageDocumentLength) || math.IsInf(corpus.AverageDocumentLength, 0) {
 		return 0
 	}
 	params = normalizeBM25Params(params)
@@ -55,10 +55,10 @@ func normalizeBM25Params(params BM25Params) BM25Params {
 	if params == (BM25Params{}) {
 		return defaults
 	}
-	if params.K1 <= 0 {
+	if params.K1 <= 0 || math.IsNaN(params.K1) || math.IsInf(params.K1, 0) {
 		params.K1 = defaults.K1
 	}
-	if params.B < 0 || params.B > 1 {
+	if params.B < 0 || params.B > 1 || math.IsNaN(params.B) || math.IsInf(params.B, 0) {
 		params.B = defaults.B
 	}
 	return params

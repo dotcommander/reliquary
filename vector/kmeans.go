@@ -63,6 +63,9 @@ func KMeans(points [][]float32, k int, rng *rand.Rand) *KMeansResult {
 }
 
 func kmeansInputDims(points [][]float32) (int, bool) {
+	if len(points) == 0 {
+		return 0, false
+	}
 	dims := len(points[0])
 	if dims == 0 {
 		return 0, false
@@ -296,6 +299,9 @@ func pointSilhouette(idx int, points [][]float32, assignments []int, k int, sums
 // the k with the highest silhouette score.
 func FindOptimalK(points [][]float32, minK, maxK int, rng *rand.Rand) (int, float64) {
 	n := len(points)
+	if n == 0 {
+		return 0, 0
+	}
 	if _, ok := kmeansInputDims(points); !ok {
 		return 0, 0
 	}

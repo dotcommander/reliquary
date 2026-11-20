@@ -77,8 +77,8 @@ func EvaluateSource(query EvalQuery, report SourceReport, k int) SourceReport {
 	report.Results = canonicalRankedResults(report.Results)
 	report.CandidateCount = len(report.Results)
 	report.HitCount = hitCount(query.Relevant, report.Results)
-	if len(query.Relevant) > 0 {
-		report.CandidateRecall = float64(report.HitCount) / float64(len(query.Relevant))
+	if relevantCount := positiveRelevantCount(query.Relevant); relevantCount > 0 {
+		report.CandidateRecall = float64(report.HitCount) / float64(relevantCount)
 	}
 	report.Metrics = Evaluate(query, report.Results, k)
 	return report

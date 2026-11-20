@@ -54,14 +54,14 @@ func TestSearchQueryUsesBoundedPgvectorAndDeterministicFilters(t *testing.T) {
 		t.Fatalf("searchQuery: %v", err)
 	}
 	for _, want := range []string{
-		`FROM "items"`, `document_id = $1`, `metadata @> $2::jsonb`,
-		`embedding <=> $3 NULLS LAST, id ASC`, `LIMIT $4`,
+		`FROM "items"`, `document_id = $1`, `metadata @> $2::jsonb AND jsonb_typeof(metadata -> $3) = 'string'`,
+		`embedding <=> $4 NULLS LAST, id ASC`, `LIMIT $5`,
 	} {
 		if !strings.Contains(statement, want) {
 			t.Fatalf("query %q does not contain %q", statement, want)
 		}
 	}
-	if len(args) != 4 || args[3] != 5 {
+	if len(args) != 5 || args[2] != "tenant" || args[4] != 5 {
 		t.Fatalf("args = %#v", args)
 	}
 }
@@ -70,14 +70,17 @@ func TestSearchQueryPreservesExactJSONNumber(t *testing.T) {
 	t.Parallel()
 
 	idx := &Index{quoted: `"items"`}
-	_, args, err := idx.searchQuery(indexcontract.IndexQuery{
+	statement, args, err := idx.searchQuery(indexcontract.IndexQuery{
 		Filter: map[string]any{"large": json.Number("9007199254740993")},
 	})
 	if err != nil {
 		t.Fatalf("searchQuery: %v", err)
 	}
-	if len(args) != 1 {
-		t.Fatalf("args = %#v, want one JSON argument", args)
+	if !strings.Contains(statement, `metadata @> $1::jsonb AND jsonb_typeof(metadata -> $2) = 'number'`) {
+		t.Fatalf("query %q missing scalar number guard", statement)
+	}
+	if len(args) != 2 || args[1] != "large" {
+		t.Fatalf("args = %#v, want [json, key]", args)
 	}
 	encoded, ok := args[0].([]byte)
 	if !ok {
@@ -85,6 +88,42 @@ func TestSearchQueryPreservesExactJSONNumber(t *testing.T) {
 	}
 	if got, want := string(encoded), `{"large":9007199254740993}`; got != want {
 		t.Fatalf("encoded filter = %q, want %q", got, want)
+	}
+}
+
+func TestSearchQueryGuardsJSONBScalarTypes(t *testing.T) {
+	t.Parallel()
+
+	idx := &Index{quoted: `"items"`}
+	for _, tc := range []struct {
+		name     string
+		key      string
+		value    any
+		wantType string
+	}{
+		{name: "string", key: "tag", value: "go", wantType: "string"},
+		{name: "boolean", key: "active", value: true, wantType: "boolean"},
+		{name: "null", key: "deleted_at", value: nil, wantType: "null"},
+		{name: "int", key: "count", value: 42, wantType: "number"},
+		{name: "float64", key: "ratio", value: 1.5, wantType: "number"},
+		{name: "json.Number", key: "exact", value: json.Number("9007199254740993"), wantType: "number"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			statement, args, err := idx.searchQuery(indexcontract.IndexQuery{
+				Filter: map[string]any{tc.key: tc.value},
+			})
+			if err != nil {
+				t.Fatalf("searchQuery: %v", err)
+			}
+			wantClause := fmt.Sprintf(`metadata @> $1::jsonb AND jsonb_typeof(metadata -> $2) = '%s'`, tc.wantType)
+			if !strings.Contains(statement, wantClause) {
+				t.Fatalf("query %q does not contain %q", statement, wantClause)
+			}
+			if len(args) != 2 || args[1] != tc.key {
+				t.Fatalf("args = %#v, want key %q at index 1", args, tc.key)
+			}
+		})
 	}
 }
 

@@ -235,7 +235,7 @@ func TestHeadingAware_RepeatedSectionSpan(t *testing.T) {
 
 	// Two sections with identical heading text must not both resolve to the first
 	// occurrence and misattribute the second section's span.
-	doc := "# See also\n\nFirst occurrence.\n\n# See also\n\nSecond occurrence."
+	doc := "# See also\nFirst occurrence.\n\n# See also\nSecond occurrence."
 
 	c, err := NewChunker(HeadingAware)
 	require.NoError(t, err)

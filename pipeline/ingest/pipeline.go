@@ -1,6 +1,9 @@
 package ingest
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Pipeline wires a reader, decoder, mapper, and sink into a resumable ingest run.
 //
@@ -70,14 +73,32 @@ func (p *Pipeline[Decoded, Out]) Run(ctx context.Context, cursor Cursor) (Report
 
 		mapped := make([]Record[Out], 0, len(batch.Records))
 		for _, raw := range batch.Records {
+			if err := ctx.Err(); err != nil {
+				return report, err
+			}
 			decoded, err := p.decode(ctx, raw)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return report, err
+				}
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return report, ctxErr
+				}
 				report.Errors++
 				continue
 			}
 			for _, rec := range decoded {
+				if err := ctx.Err(); err != nil {
+					return report, err
+				}
 				out, err := p.mapper.Map(ctx, rec)
 				if err != nil {
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						return report, err
+					}
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return report, ctxErr
+					}
 					report.Errors++
 					continue
 				}

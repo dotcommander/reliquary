@@ -82,5 +82,13 @@ func (s Space) ValidateQuery(query indexcontract.IndexQuery) error {
 			return fmt.Errorf("reliquary index: query vector values must be finite")
 		}
 	}
+	if s.Dimension > 0 && len(query.RawVector) > 0 && len(query.RawVector) != s.Dimension {
+		return fmt.Errorf("%w: index has %d dimensions, query raw vector has %d", indexcontract.ErrDimensionMismatch, s.Dimension, len(query.RawVector))
+	}
+	for _, value := range query.RawVector {
+		if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+			return fmt.Errorf("reliquary index: query raw vector values must be finite")
+		}
+	}
 	return nil
 }

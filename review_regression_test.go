@@ -7,7 +7,9 @@ import (
 
 	"github.com/dotcommander/reliquary"
 	"github.com/dotcommander/reliquary/chunking"
+	"github.com/dotcommander/reliquary/document"
 	"github.com/dotcommander/reliquary/embed"
+	indexcontract "github.com/dotcommander/reliquary/index"
 	"github.com/dotcommander/reliquary/retrieval"
 )
 
@@ -71,5 +73,64 @@ func TestSearchReturnsContextErrorWhenCanceledAfterIndex(t *testing.T) {
 	}
 	if rows != nil {
 		t.Fatalf("Search rows = %v, want nil", rows)
+	}
+}
+
+func TestAppIngestEmptyDocRespectsIndexIdentity(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	sharedIdx := reliquary.NewMemoryIndex()
+	embedder := embed.NewHashing(16)
+
+	appA, err := reliquary.New(
+		reliquary.WithEmbedder(embedder),
+		reliquary.WithIndex(sharedIdx),
+		reliquary.WithIndexIdentity("space-a"),
+	)
+	if err != nil {
+		t.Fatalf("New(appA): %v", err)
+	}
+	appB, err := reliquary.New(
+		reliquary.WithEmbedder(embedder),
+		reliquary.WithIndex(sharedIdx),
+		reliquary.WithIndexIdentity("space-b"),
+	)
+	if err != nil {
+		t.Fatalf("New(appB): %v", err)
+	}
+
+	if _, err := appA.Ingest(ctx, document.Document{ID: "doc-1", Text: "alpha beta gamma"}); err != nil {
+		t.Fatalf("appA.Ingest: %v", err)
+	}
+
+	// Empty content produces zero chunks; must still fail identity check and not delete appA's doc.
+	_, err = appB.Ingest(ctx, document.Document{ID: "doc-1", Text: "   "})
+	if !errors.Is(err, indexcontract.ErrIdentityMismatch) {
+		t.Fatalf("appB.Ingest(empty) error = %v, want ErrIdentityMismatch", err)
+	}
+
+	results, err := appA.Search(ctx, "alpha")
+	if err != nil {
+		t.Fatalf("appA.Search: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("appA document was deleted by mismatched identity empty ingest")
+	}
+}
+
+func TestAppSearchValidatesOptionsOnBlankQueries(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	app := reliquary.InMemory(16)
+
+	invalidFilter := reliquary.WithFilter(map[string]any{"nested": map[string]any{"bad": true}})
+
+	if _, err := app.Search(ctx, "   ", invalidFilter); err == nil {
+		t.Fatal("Search(blank, invalidFilter) error = nil, want validation error")
+	}
+	if _, err := app.SearchBatch(ctx, []string{"", " \t "}, invalidFilter); err == nil {
+		t.Fatal("SearchBatch(all blank, invalidFilter) error = nil, want validation error")
 	}
 }

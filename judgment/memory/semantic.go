@@ -158,6 +158,10 @@ func (s *SemanticStore) Close() error {
 // GetChoice returns the cached choice for key: an exact fingerprint hit
 // first, then a semantic match for rawInput within the same scope.
 func (s *SemanticStore) GetChoice(ctx context.Context, key Key, rawInput string) (judgment.Choice, Hit, error) {
+	if key.Primitive != PrimitiveChoice {
+		s.misses.Add(1)
+		return judgment.Choice{}, Hit{}, nil
+	}
 	if item := s.cache.Get(key); item != nil {
 		if stored := item.Value().choice; stored != nil {
 			s.exactHits.Add(1)
@@ -192,6 +196,10 @@ func (s *SemanticStore) PutChoice(ctx context.Context, key Key, rawInput string,
 
 // GetScore returns the cached score with GetChoice's resolution rules.
 func (s *SemanticStore) GetScore(ctx context.Context, key Key, rawInput string) (judgment.Score, Hit, error) {
+	if key.Primitive != PrimitiveScore {
+		s.misses.Add(1)
+		return judgment.Score{}, Hit{}, nil
+	}
 	if item := s.cache.Get(key); item != nil {
 		if stored := item.Value().score; stored != nil {
 			s.exactHits.Add(1)
@@ -226,6 +234,10 @@ func (s *SemanticStore) PutScore(ctx context.Context, key Key, rawInput string, 
 
 // GetNoul returns the cached noul with GetChoice's resolution rules.
 func (s *SemanticStore) GetNoul(ctx context.Context, key Key, rawInput string) (judgment.Noul, Hit, error) {
+	if key.Primitive != PrimitiveNoul {
+		s.misses.Add(1)
+		return judgment.Noul{}, Hit{}, nil
+	}
 	if item := s.cache.Get(key); item != nil {
 		if stored := item.Value().noul; stored != nil {
 			s.exactHits.Add(1)

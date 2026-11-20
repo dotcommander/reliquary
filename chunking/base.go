@@ -176,11 +176,19 @@ func trimSpanToText(source, target string, rawStart, rawEnd int) (int, int) {
 	if rawEnd > len(source) {
 		rawEnd = len(source)
 	}
-	for rawStart < rawEnd && rawStart < len(source) && (source[rawStart] == ' ' || source[rawStart] == '\n' || source[rawStart] == '\t' || source[rawStart] == '\r') {
-		rawStart++
+	for rawStart < rawEnd {
+		r, w := utf8.DecodeRuneInString(source[rawStart:rawEnd])
+		if w == 0 || !unicode.IsSpace(r) {
+			break
+		}
+		rawStart += w
 	}
-	for rawEnd > rawStart && rawEnd > 0 && (source[rawEnd-1] == ' ' || source[rawEnd-1] == '\n' || source[rawEnd-1] == '\t' || source[rawEnd-1] == '\r') {
-		rawEnd--
+	for rawEnd > rawStart {
+		r, w := utf8.DecodeLastRuneInString(source[rawStart:rawEnd])
+		if w == 0 || !unicode.IsSpace(r) {
+			break
+		}
+		rawEnd -= w
 	}
 	return rawStart, rawEnd
 }
@@ -215,7 +223,7 @@ func appendChunkIfValid(chunks []Chunk, id int, text, source string, start, end 
 	if text == "" {
 		return chunks
 	}
-	if source != "" && (end > len(source) || start >= end || source[start:end] != text) {
+	if source != "" && (start < 0 || end > len(source) || start >= end || source[start:end] != text) {
 		start, end = 0, 0
 	}
 	return append(chunks, buildChunkWithSpan(id, text, start, end))

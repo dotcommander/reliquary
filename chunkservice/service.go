@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"unicode/utf8"
 
 	"github.com/dotcommander/reliquary/chunking"
@@ -134,7 +135,7 @@ func (s *Service) semanticChunks(ctx context.Context, req Request) ([]chunking.C
 	if s.embedder == nil {
 		return nil, SemanticUnavailable()
 	}
-	latch := chunking.LatchBatchEmbedder(s.embedder)
+	latch := chunking.LatchBatchEmbedder(validatingBatchEmbedder{inner: s.embedder})
 	semanticChunker, err := chunking.NewSemanticChunker(latch, SemanticOptsFrom(req.Semantic))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create semantic chunker: %w", err)
@@ -147,6 +148,56 @@ func (s *Service) semanticChunks(ctx context.Context, req Request) ([]chunking.C
 		return chunks, nil
 	}
 	return chunking.EnforceTokenLimits(chunks, req.PreflightCounter), nil
+}
+
+// validatingBatchEmbedder rejects malformed embedding batches (count mismatch,
+// empty vectors, dimension mismatch, zero vectors, or NaN/Inf values) that
+// would otherwise cause PlanSemanticChunks to silently fall back to
+// SmartBoundary with a nil error.
+type validatingBatchEmbedder struct {
+	inner chunking.BatchEmbedder
+}
+
+func (v validatingBatchEmbedder) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	vectors, err := v.inner.EmbedBatch(ctx, texts)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEmbeddingBatch(vectors, len(texts)); err != nil {
+		return nil, err
+	}
+	return vectors, nil
+}
+
+func validateEmbeddingBatch(vectors [][]float32, want int) error {
+	if len(vectors) != want {
+		return fmt.Errorf("provider returned %d vectors for %d inputs", len(vectors), want)
+	}
+	if len(vectors) == 0 {
+		return nil
+	}
+	dim := len(vectors[0])
+	if dim == 0 {
+		return fmt.Errorf("provider returned empty embedding vector")
+	}
+	for i, vec := range vectors {
+		if len(vec) != dim {
+			return fmt.Errorf("vector %d dimension %d does not match expected %d", i, len(vec), dim)
+		}
+		nonZero := false
+		for j, val := range vec {
+			if math.IsNaN(float64(val)) || math.IsInf(float64(val), 0) {
+				return fmt.Errorf("vector %d[%d] is non-finite", i, j)
+			}
+			if val != 0 {
+				nonZero = true
+			}
+		}
+		if !nonZero {
+			return fmt.Errorf("vector %d is all zeros", i)
+		}
+	}
+	return nil
 }
 
 // boundaryChunks runs every non-semantic strategy, weaving the optional

@@ -138,6 +138,7 @@ func (c *OptimalChunker) splitIntoSpans(text string) []textSpan {
 		// Try paragraph break in upper half of the window.
 		window := text[byteCursor:windowEndByte]
 
+		foundBreak := false
 		if idx := strings.LastIndex(window, "\n\n"); idx >= 0 {
 			breakByte := byteCursor + idx
 			breakRune := runeCursor + len([]rune(text[byteCursor:breakByte]))
@@ -145,14 +146,18 @@ func (c *OptimalChunker) splitIntoSpans(text string) []textSpan {
 				// Include the \n\n in both byte end and rune advance.
 				chunkBytes = breakRune - runeCursor + 2
 				chunkByteEnd = breakByte + 2
+				foundBreak = true
 			}
-		} else if idx := strings.LastIndex(window, ". "); idx >= 0 {
-			breakByte := byteCursor + idx
-			breakRune := runeCursor + len([]rune(text[byteCursor:breakByte]))
-			if breakRune > runeCursor+half {
-				// Include the ". " in both byte end and rune advance.
-				chunkBytes = breakRune - runeCursor + 2
-				chunkByteEnd = breakByte + 2
+		}
+		if !foundBreak {
+			if idx := strings.LastIndex(window, ". "); idx >= 0 {
+				breakByte := byteCursor + idx
+				breakRune := runeCursor + len([]rune(text[byteCursor:breakByte]))
+				if breakRune > runeCursor+half {
+					// Include the ". " in both byte end and rune advance.
+					chunkBytes = breakRune - runeCursor + 2
+					chunkByteEnd = breakByte + 2
+				}
 			}
 		}
 

@@ -14,20 +14,22 @@ func Run[T any](begin func() (T, error), rollback func(T) error, commit func(T) 
 		return fmt.Errorf("begin transaction: %w", err)
 	}
 
+	done := false
 	defer func() {
-		if p := recover(); p != nil {
+		if !done {
 			_ = rollback(tx)
-			panic(p)
 		}
 	}()
 
 	if err := fn(tx); err != nil {
+		done = true
 		if rbErr := rollback(tx); rbErr != nil {
 			return errors.Join(fmt.Errorf("rollback failed: %w", rbErr), err)
 		}
 		return err
 	}
 
+	done = true
 	if err := commit(tx); err != nil {
 		return fmt.Errorf("commit transaction: %w", err)
 	}

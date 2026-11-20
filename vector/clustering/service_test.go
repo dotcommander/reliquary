@@ -55,6 +55,55 @@ func TestServiceHAC(t *testing.T) {
 	}
 }
 
+func TestServiceHACAutoKHonorsLinkage(t *testing.T) {
+	t.Parallel()
+	svc := NewClusterService("hac")
+
+	// Asymmetric chain: single linkage chains 0..62 together leaving 95 alone,
+	// whereas complete linkage merges {62, 95} (33 deg) before {0,10} with {25,42} (42 deg).
+	anglesDeg := []float64{0, 10, 25, 42, 62, 95}
+	embeddings := make([][]float64, len(anglesDeg))
+	for i, deg := range anglesDeg {
+		rad := deg * math.Pi / 180
+		embeddings[i] = []float64{math.Cos(rad), math.Sin(rad)}
+	}
+
+	singleRes, err := svc.Cluster(embeddings, ClusterOptions{
+		K:       0,
+		MaxK:    2,
+		Linkage: "single",
+	})
+	if err != nil {
+		t.Fatalf("single linkage auto-k error: %v", err)
+	}
+	completeRes, err := svc.Cluster(embeddings, ClusterOptions{
+		K:       0,
+		MaxK:    2,
+		Linkage: "complete",
+	})
+	if err != nil {
+		t.Fatalf("complete linkage auto-k error: %v", err)
+	}
+
+	// Verify each auto-k result matches direct HAC with its requested linkage.
+	directSingle := HAC(embeddings, HACConfig{K: singleRes.K, Linkage: LinkageSingle})
+	directComplete := HAC(embeddings, HACConfig{K: completeRes.K, Linkage: LinkageComplete})
+	if len(singleRes.Assignments) != len(directSingle.Assignments) || len(completeRes.Assignments) != len(directComplete.Assignments) {
+		t.Fatalf("unexpected assignment lengths")
+	}
+	for i := range embeddings {
+		if singleRes.Assignments[i] != directSingle.Assignments[i] {
+			t.Fatalf("single auto-k assignment[%d] = %d, want direct HAC %d", i, singleRes.Assignments[i], directSingle.Assignments[i])
+		}
+		if completeRes.Assignments[i] != directComplete.Assignments[i] {
+			t.Fatalf("complete auto-k assignment[%d] = %d, want direct HAC %d", i, completeRes.Assignments[i], directComplete.Assignments[i])
+		}
+	}
+	if singleRes.K == completeRes.K && singleRes.Silhouette == completeRes.Silhouette {
+		t.Fatalf("expected single and complete linkage auto-k to differ on chained dataset; both got K=%d Silhouette=%v", singleRes.K, singleRes.Silhouette)
+	}
+}
+
 func TestServiceGreedy(t *testing.T) {
 	t.Parallel()
 	svc := NewClusterService("greedy")

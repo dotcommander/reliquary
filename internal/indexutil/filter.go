@@ -6,9 +6,12 @@ import (
 	"math"
 	"math/big"
 	"strconv"
+	"strings"
 
 	"github.com/dotcommander/reliquary/retrieval"
 )
+
+const maxJSONNumberExponent = 1000
 
 // ValidateFilter enforces the backend-independent JSON-scalar filter contract.
 func ValidateFilter(filter map[string]any) error {
@@ -115,6 +118,12 @@ func jsonNumber(value any) (*big.Rat, bool, error) {
 			return nil, true, fmt.Errorf("invalid JSON number %q: %w", value, err)
 		}
 		text = value.String()
+		if idx := strings.IndexAny(text, "eE"); idx >= 0 {
+			exp, err := strconv.ParseInt(text[idx+1:], 10, 64)
+			if err != nil || exp > maxJSONNumberExponent || exp < -maxJSONNumberExponent {
+				return nil, true, fmt.Errorf("JSON number %q exponent out of range", text)
+			}
+		}
 	default:
 		return nil, false, nil
 	}

@@ -74,3 +74,35 @@ func TestNewCorpusStats_Empty(t *testing.T) {
 		t.Fatal("DocumentFrequency is nil, want non-nil empty map")
 	}
 }
+
+func TestBM25Score_NonFiniteParamsAndAvgDocLen(t *testing.T) {
+	t.Parallel()
+
+	analyzer := NewAnalyzer(AnalyzerOptions{})
+	doc := NewDocumentStatsFromTokens(analyzer.Analyze("alpha alpha beta"))
+	corpus := NewCorpusStats([]DocumentStats{doc})
+	query := NormalizeQuery("alpha", analyzer)
+	wantDefault := BM25Score(query, doc, corpus, DefaultBM25Params())
+
+	for _, params := range []BM25Params{
+		{K1: math.NaN(), B: 0.75},
+		{K1: math.Inf(1), B: 0.75},
+		{K1: math.Inf(-1), B: 0.75},
+		{K1: 1.2, B: math.NaN()},
+		{K1: 1.2, B: math.Inf(1)},
+		{K1: 1.2, B: math.Inf(-1)},
+	} {
+		got := BM25Score(query, doc, corpus, params)
+		if math.IsNaN(got) || math.IsInf(got, 0) || got != wantDefault {
+			t.Fatalf("BM25Score(params=%+v) = %v, want default %v", params, got, wantDefault)
+		}
+	}
+
+	for _, avgLen := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		badCorpus := corpus
+		badCorpus.AverageDocumentLength = avgLen
+		if got := BM25Score(query, doc, badCorpus, DefaultBM25Params()); got != 0 {
+			t.Fatalf("BM25Score(avgDocLen=%v) = %v, want 0", avgLen, got)
+		}
+	}
+}

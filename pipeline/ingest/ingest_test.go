@@ -339,3 +339,101 @@ func (s *batchSink[T]) Write(_ context.Context, batch Batch[T]) (Report, error) 
 	s.batches = append(s.batches, batch)
 	return Report{Written: len(batch.Records), Cursor: batch.Cursor}, nil
 }
+
+type funcDecoder struct {
+	fn func(context.Context, []byte) ([]Record[string], error)
+}
+
+func (d funcDecoder) Decode(ctx context.Context, data []byte) ([]Record[string], error) {
+	return d.fn(ctx, data)
+}
+
+type funcMapper struct {
+	fn func(context.Context, Record[string]) (Record[note], error)
+}
+
+func (m funcMapper) Map(ctx context.Context, rec Record[string]) (Record[note], error) {
+	return m.fn(ctx, rec)
+}
+
+func TestPipelineRunAbortsOnContextCancellationInDecodeOrMap(t *testing.T) {
+	t.Parallel()
+
+	start := Cursor{Source: "feed", Token: "before"}
+	next := Cursor{Source: "feed", Token: "after"}
+
+	t.Run("decode returns context.Canceled", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		sink := &batchSink[note]{}
+		p := NewPipeline[string, note](
+			&oneBatchReader{batch: Batch[[]byte]{
+				Records: []Record[[]byte]{{ID: "1", Payload: []byte("1|A|b")}, {ID: "2", Payload: []byte("2|C|d")}},
+				Cursor:  next,
+			}},
+			funcDecoder{fn: func(_ context.Context, _ []byte) ([]Record[string], error) {
+				cancel()
+				return nil, context.Canceled
+			}},
+			noteMapper{},
+			sink,
+		)
+		rep, err := p.Run(ctx, start)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+		if rep.Cursor != start || rep.Errors != 0 || len(sink.batches) != 0 {
+			t.Fatalf("Run() report = %+v, sink batches = %d, want unchanged cursor, 0 errors, 0 writes", rep, len(sink.batches))
+		}
+	})
+
+	t.Run("map returns context.DeadlineExceeded", func(t *testing.T) {
+		t.Parallel()
+		sink := &batchSink[note]{}
+		p := NewPipeline[string, note](
+			&oneBatchReader{batch: Batch[[]byte]{
+				Records: []Record[[]byte]{{ID: "1", Payload: []byte("1|A|b")}},
+				Cursor:  next,
+			}},
+			lineDecoder{},
+			funcMapper{fn: func(_ context.Context, _ Record[string]) (Record[note], error) {
+				return Record[note]{}, context.DeadlineExceeded
+			}},
+			sink,
+		)
+		rep, err := p.Run(context.Background(), start)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Run() error = %v, want context.DeadlineExceeded", err)
+		}
+		if rep.Cursor != start || rep.Errors != 0 || len(sink.batches) != 0 {
+			t.Fatalf("Run() report = %+v, sink batches = %d, want unchanged cursor, 0 errors, 0 writes", rep, len(sink.batches))
+		}
+	})
+
+	t.Run("canceled context before decode skips decode and sink", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		decodeCalls := 0
+		sink := &batchSink[note]{}
+		p := NewPipeline[string, note](
+			&oneBatchReader{batch: Batch[[]byte]{
+				Records: []Record[[]byte]{{ID: "1", Payload: []byte("1|A|b")}},
+				Cursor:  next,
+			}},
+			funcDecoder{fn: func(_ context.Context, _ []byte) ([]Record[string], error) {
+				decodeCalls++
+				return nil, nil
+			}},
+			noteMapper{},
+			sink,
+		)
+		rep, err := p.Run(ctx, start)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Run() error = %v, want context.Canceled", err)
+		}
+		if decodeCalls != 0 || len(sink.batches) != 0 || rep.Cursor != start {
+			t.Fatalf("decodeCalls=%d sinkBatches=%d cursor=%+v, want 0, 0, %+v", decodeCalls, len(sink.batches), rep.Cursor, start)
+		}
+	})
+}
